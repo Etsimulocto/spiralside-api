@@ -1,31 +1,38 @@
 # ============================================================
-# Spiralside API Backend
-# FastAPI server — proxies Anthropic API calls safely
-# Loads character personas from HuggingFace Space at startup
-# Deploy on Railway — set env vars ANTHROPIC_API_KEY + SUPABASE_*
+# Spiralside API Backend — with PayPal checkout
 # ============================================================
 
 import os
 import httpx
+import json
 from datetime import date
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
 
 # ── ENV VARS ──────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-SUPABASE_URL      = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY      = os.environ.get("SUPABASE_SERVICE_KEY")
+ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY")
+SUPABASE_URL       = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY       = os.environ.get("SUPABASE_SERVICE_KEY")
+PAYPAL_CLIENT_ID   = os.environ.get("PAYPAL_CLIENT_ID")
+PAYPAL_SECRET      = os.environ.get("PAYPAL_SECRET")
+PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
-FREE_DAILY_LIMIT  = 10
-CREDIT_COST       = 0.01
+FREE_DAILY_LIMIT = 10
+CREDIT_COST      = 0.01
+
+# Credit packs: amount in USD -> credits granted
+CREDIT_PACKS = {
+    "5":  500,
+    "10": 1100,
+    "20": 2400,
+}
 
 # ── HF CHARACTER FILES ────────────────────────────────────
 HF_RAW = "https://huggingface.co/spaces/quarterbitgames/spiralside/raw/main"
-
 CHARACTER_FILES = {
     "sky":       "characters/sky.txt",
     "cold":      "characters/cold.txt",
@@ -34,7 +41,6 @@ CHARACTER_FILES = {
     "architect": "characters/architect.txt",
     "cat":       "characters/cat.txt",
 }
-
 character_cache: dict = {}
 
 async def load_characters():
@@ -50,6 +56,50 @@ async def load_characters():
             except Exception as e:
                 print(f"[characters] error loading {name}: {e}")
 
+# ── PAYPAL HELPERS ────────────────────────────────────────
+async def get_paypal_token() -> str:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYPAL_BASE}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
+            data={"grant_type": "client_credentials"}
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+async def create_paypal_order(amount: str, user_id: str) -> dict:
+    token = await get_paypal_token()
+    credits = CREDIT_PACKS.get(amount, 0)
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "intent": "CAPTURE",
+                "purchase_units": [{
+                    "amount": {"currency_code": "USD", "value": amount},
+                    "description": f"Spiralside {credits} credits",
+                    "custom_id": f"{user_id}|{amount}"  # store user+amount for webhook
+                }],
+                "application_context": {
+                    "return_url": "https://www.spiralside.com/?payment=success",
+                    "cancel_url": "https://www.spiralside.com/?payment=cancelled"
+                }
+            }
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+async def capture_paypal_order(order_id: str) -> dict:
+    token = await get_paypal_token()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}/capture",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 # ── APP LIFESPAN ──────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,19 +107,12 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── SUPABASE CLIENT ───────────────────────────────────────
+# ── SUPABASE ──────────────────────────────────────────────
 def get_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ── AUTH HELPER ───────────────────────────────────────────
 async def verify_user(authorization: str):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -83,7 +126,6 @@ async def verify_user(authorization: str):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[auth error] {type(e).__name__}: {e}")
         raise HTTPException(status_code=401, detail=f"Auth failed: {str(e)}")
 
 # ── REQUEST MODELS ────────────────────────────────────────
@@ -93,12 +135,18 @@ class ChatRequest(BaseModel):
     vault_context: str = ""
     bot_name: str = ""
 
-# ── HEALTH CHECK ──────────────────────────────────────────
+class OrderRequest(BaseModel):
+    amount: str  # "5", "10", or "20"
+
+class CaptureRequest(BaseModel):
+    order_id: str
+
+# ── HEALTH ────────────────────────────────────────────────
 @app.get("/")
 def health():
     return {"status": "ok", "service": "spiralside-api", "characters_loaded": list(character_cache.keys())}
 
-# ── USAGE ENDPOINT ────────────────────────────────────────
+# ── USAGE ─────────────────────────────────────────────────
 @app.get("/usage")
 async def get_usage(authorization: str = Header(None)):
     user_id, sb = await verify_user(authorization)
@@ -112,15 +160,12 @@ async def get_usage(authorization: str = Header(None)):
         record["free_messages_today"] = 0
     return {"credits": record["credits"], "free_messages_today": record["free_messages_today"], "is_paid": record["is_paid"]}
 
-# ── CHAT ENDPOINT ─────────────────────────────────────────
+# ── CHAT ──────────────────────────────────────────────────
 @app.post("/chat")
 async def chat(req: ChatRequest, authorization: str = Header(None)):
-
     user_id, sb = await verify_user(authorization)
-
     today = str(date.today())
     usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
-
     if not usage.data:
         sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0, "free_messages_today": 0, "last_reset_date": today, "is_paid": False}).execute()
         free_count, credits, is_paid = 0, 0.0, False
@@ -130,27 +175,17 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         if record.get("last_reset_date") != today:
             free_count = 0
             sb.table("user_usage").update({"free_messages_today": 0, "last_reset_date": today}).eq("user_id", user_id).execute()
-
     if not is_paid:
         if free_count >= FREE_DAILY_LIMIT:
             raise HTTPException(status_code=429, detail=f"Free limit reached ({FREE_DAILY_LIMIT}/day). Add credits to continue.")
     else:
         if credits < CREDIT_COST:
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
-
-    # ── Build system prompt — check for Spiral City character ──
     bot_name_lower = (req.bot_name or "").strip().lower()
     character_prompt = character_cache.get(bot_name_lower)
-
-    if character_prompt:
-        system = character_prompt
-        print(f"[chat] character mode: {bot_name_lower}")
-    else:
-        system = req.system_prompt
-
+    system = character_prompt if character_prompt else req.system_prompt
     if req.vault_context:
         system += f"\n\nThe user has shared these files:\n{req.vault_context}"
-
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -162,23 +197,13 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         reply = resp.json()["content"][0]["text"]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
-
     if not is_paid:
         sb.table("user_usage").update({"free_messages_today": free_count + 1}).eq("user_id", user_id).execute()
     else:
         sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4)}).eq("user_id", user_id).execute()
+    return {"reply": reply, "usage": {"is_paid": is_paid, "free_messages_today": free_count + 1 if not is_paid else None, "free_limit": FREE_DAILY_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
 
-    return {
-        "reply": reply,
-        "usage": {
-            "is_paid": is_paid,
-            "free_messages_today": free_count + 1 if not is_paid else None,
-            "free_limit": FREE_DAILY_LIMIT,
-            "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None
-        }
-    }
-
-# ── SHEET ENDPOINT ────────────────────────────────────────
+# ── SHEET ─────────────────────────────────────────────────
 @app.post("/sheet")
 async def update_sheet(req: ChatRequest, authorization: str = Header(None)):
     await verify_user(authorization)
@@ -193,7 +218,48 @@ async def update_sheet(req: ChatRequest, authorization: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── RELOAD CHARACTERS (no redeploy needed) ────────────────
+# ── PAYPAL: CREATE ORDER ──────────────────────────────────
+@app.post("/create-order")
+async def create_order(req: OrderRequest, authorization: str = Header(None)):
+    user_id, _ = await verify_user(authorization)
+    if req.amount not in CREDIT_PACKS:
+        raise HTTPException(status_code=400, detail="Invalid amount. Choose 5, 10, or 20.")
+    try:
+        order = await create_paypal_order(req.amount, user_id)
+        # Find the approval URL for redirect
+        approve_url = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
+        return {"order_id": order["id"], "approve_url": approve_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PayPal error: {str(e)}")
+
+# ── PAYPAL: CAPTURE ORDER (user returns after payment) ────
+@app.post("/capture-order")
+async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    try:
+        result = await capture_paypal_order(req.order_id)
+        if result["status"] != "COMPLETED":
+            raise HTTPException(status_code=400, detail="Payment not completed.")
+        # Extract amount from custom_id: "user_id|amount"
+        custom_id = result["purchase_units"][0].get("custom_id", "")
+        parts = custom_id.split("|")
+        amount = parts[1] if len(parts) == 2 else "5"
+        credits_to_add = CREDIT_PACKS.get(amount, 500)
+        # Add credits to user
+        usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+        if not usage.data:
+            sb.table("user_usage").insert({"user_id": user_id, "credits": float(credits_to_add), "free_messages_today": 0, "last_reset_date": str(date.today()), "is_paid": True}).execute()
+        else:
+            current = usage.data[0]["credits"] or 0
+            sb.table("user_usage").update({"credits": current + credits_to_add, "is_paid": True}).eq("user_id", user_id).execute()
+        print(f"[payment] {user_id} purchased {credits_to_add} credits (${amount})")
+        return {"success": True, "credits_added": credits_to_add, "amount": amount}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Capture error: {str(e)}")
+
+# ── RELOAD CHARACTERS ─────────────────────────────────────
 @app.post("/reload-characters")
 async def reload_characters():
     await load_characters()
