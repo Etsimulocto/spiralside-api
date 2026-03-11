@@ -19,12 +19,7 @@ app = FastAPI()
 # Allow requests from your frontend domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://spiralside.com",
-        "https://www.spiralside.com",
-        "https://spiralside.vercel.app",
-        "http://localhost:3000",  # local dev
-    ],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
