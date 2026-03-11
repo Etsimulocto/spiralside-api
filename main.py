@@ -264,3 +264,31 @@ async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
 async def reload_characters():
     await load_characters()
     return {"loaded": list(character_cache.keys())}
+
+# ── ADMIN: ADD CREDITS ────────────────────────────────────
+# Protected by admin secret — set ADMIN_SECRET in Railway env vars
+@app.post("/admin/add-credits")
+async def admin_add_credits(request: Request):
+    body = await request.json()
+    secret = body.get("secret")
+    email  = body.get("email")
+    amount = int(body.get("amount", 0))
+    admin_secret = os.environ.get("ADMIN_SECRET")
+    if not admin_secret or secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not email or amount <= 0:
+        raise HTTPException(status_code=400, detail="Need email and amount")
+    sb = get_supabase()
+    # Look up user by email
+    users = sb.auth.admin.list_users()
+    user = next((u for u in users if u.email == email), None)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {email} not found")
+    usage = sb.table("user_usage").select("*").eq("user_id", user.id).execute()
+    if not usage.data:
+        sb.table("user_usage").insert({"user_id": user.id, "credits": float(amount), "free_messages_today": 0, "last_reset_date": str(date.today()), "is_paid": True}).execute()
+    else:
+        current = usage.data[0]["credits"] or 0
+        sb.table("user_usage").update({"credits": current + amount, "is_paid": True}).eq("user_id", user.id).execute()
+    print(f"[admin] added {amount} credits to {email}")
+    return {"success": True, "email": email, "credits_added": amount}
