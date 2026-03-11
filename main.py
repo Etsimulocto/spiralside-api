@@ -64,10 +64,17 @@ async def chat(
     # ── 2. Get user from Supabase token ──
     try:
         sb = get_supabase()
+        # Use admin client to verify the JWT
         user_resp = sb.auth.get_user(token)
+        if not user_resp or not user_resp.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
         user_id = user_resp.user.id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the actual error to Railway logs for debugging
+        print(f"[auth error] {type(e).__name__}: {e}")
+        raise HTTPException(status_code=401, detail=f"Auth failed: {str(e)}")
 
     # ── 3. Check/update usage limits ──
     today = str(date.today())
