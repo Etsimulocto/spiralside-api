@@ -168,6 +168,7 @@ class ImageRequest(BaseModel):
 
 # ── HEALTH ────────────────────────────────────────────────
 # v1.1 — image generation endpoint added
+# v1.1 — image generation endpoint added
 @app.get("/")
 def health():
     return {"status": "ok", "service": "spiralside-api", "characters_loaded": list(character_cache.keys())}
