@@ -21,7 +21,7 @@ PAYPAL_SECRET      = os.environ.get("PAYPAL_SECRET")
 PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
-FREE_DAILY_LIMIT = 10
+FREE_LIFETIME_LIMIT = 15  # total messages ever, never resets
 CREDIT_COST      = 0.01
 
 # Credit packs: amount in USD -> credits granted
@@ -167,17 +167,15 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     today = str(date.today())
     usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
     if not usage.data:
-        sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0, "free_messages_today": 0, "last_reset_date": today, "is_paid": False}).execute()
-        free_count, credits, is_paid = 0, 0.0, False
+        sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0, "total_messages": 0, "is_paid": False}).execute()
+        credits, is_paid, total_msgs = 0.0, False, 0
     else:
         record = usage.data[0]
-        credits, is_paid, free_count = record["credits"], record["is_paid"], record["free_messages_today"]
-        if record.get("last_reset_date") != today:
-            free_count = 0
-            sb.table("user_usage").update({"free_messages_today": 0, "last_reset_date": today}).eq("user_id", user_id).execute()
+        credits, is_paid = record["credits"], record["is_paid"]
+        total_msgs = record.get("total_messages", 0)
     if not is_paid:
-        if free_count >= FREE_DAILY_LIMIT:
-            raise HTTPException(status_code=429, detail=f"Free limit reached ({FREE_DAILY_LIMIT}/day). Add credits to continue.")
+        if total_msgs >= FREE_LIFETIME_LIMIT:
+            raise HTTPException(status_code=429, detail=f"Free messages used ({FREE_LIFETIME_LIMIT} lifetime). Add credits to continue.")
     else:
         if credits < CREDIT_COST:
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
@@ -198,10 +196,10 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
     if not is_paid:
-        sb.table("user_usage").update({"free_messages_today": free_count + 1}).eq("user_id", user_id).execute()
+        sb.table("user_usage").update({"total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
     else:
-        sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4)}).eq("user_id", user_id).execute()
-    return {"reply": reply, "usage": {"is_paid": is_paid, "free_messages_today": free_count + 1 if not is_paid else None, "free_limit": FREE_DAILY_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
+        sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4), "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
+    return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_LIFETIME_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
 
 # ── SHEET ─────────────────────────────────────────────────
 @app.post("/sheet")
