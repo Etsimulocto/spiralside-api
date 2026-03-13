@@ -36,6 +36,7 @@ SUPABASE_KEY       = os.environ.get("SUPABASE_SERVICE_KEY")
 PAYPAL_CLIENT_ID   = os.environ.get("PAYPAL_CLIENT_ID")
 PAYPAL_SECRET      = os.environ.get("PAYPAL_SECRET")
 HF_TOKEN           = os.environ.get("HF_TOKEN")
+HF_TOKEN           = os.environ.get("HF_TOKEN")
 PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
