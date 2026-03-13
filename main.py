@@ -289,7 +289,7 @@ async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
 # ── IMAGE GENERATION ──────────────────────────────────────────
 IMAGE_FREE_DAILY  = 3
 IMAGE_CREDIT_COST = 5
-HF_FLUX = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+HF_FLUX = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
 
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest, authorization: str = Header(None)):
