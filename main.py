@@ -11,6 +11,23 @@ from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
+from collections import defaultdict
+import time
+
+# ── RATE LIMITING ─────────────────────────────────────────────
+# In-memory per-user rate limit: max 20 requests per 60 seconds
+RATE_LIMIT_MAX     = 20
+RATE_LIMIT_WINDOW  = 60  # seconds
+_rate_buckets: dict = defaultdict(list)
+
+def check_rate_limit(user_id: str):
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    # Drop timestamps outside the window
+    _rate_buckets[user_id] = [t for t in _rate_buckets[user_id] if t > window_start]
+    if len(_rate_buckets[user_id]) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too many requests. Slow down a little. 🌀")
+    _rate_buckets[user_id].append(now)
 
 # ── ENV VARS ──────────────────────────────────────────────
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY")
@@ -150,6 +167,7 @@ def health():
 @app.get("/usage")
 async def get_usage(authorization: str = Header(None)):
     user_id, sb = await verify_user(authorization)
+    check_rate_limit(user_id)
     today = str(date.today())
     usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
     if not usage.data:
