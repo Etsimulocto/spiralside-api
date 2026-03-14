@@ -40,7 +40,7 @@ HF_TOKEN           = os.environ.get("HF_TOKEN")
 PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
-FREE_LIFETIME_LIMIT = 15  # total messages ever, never resets
+FREE_DAILY_LIMIT = 10  # resets every day
 CREDIT_COST      = 0.01
 
 # Credit packs: amount in USD -> credits granted
@@ -219,10 +219,13 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     else:
         record = usage.data[0]
         credits, is_paid = record["credits"], record["is_paid"]
-        total_msgs = record.get("total_messages", 0)
+        free_today = record.get("free_messages_today", 0)
+        if record.get("last_reset_date") != today:
+            free_today = 0
+            sb.table("user_usage").update({"free_messages_today": 0, "last_reset_date": today}).eq("user_id", user_id).execute()
     if not is_paid:
-        if total_msgs >= FREE_LIFETIME_LIMIT:
-            raise HTTPException(status_code=429, detail=f"Free messages used ({FREE_LIFETIME_LIMIT} lifetime). Add credits to continue.")
+        if free_today >= FREE_DAILY_LIMIT:
+            raise HTTPException(status_code=429, detail=f"Free limit reached ({FREE_DAILY_LIMIT}/day). Add credits to continue.")
     else:
         if credits < CREDIT_COST:
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
@@ -236,14 +239,14 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
+                json={"model": "claude-sonnet-4-6" if is_paid else "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
             )
         resp.raise_for_status()
         reply = resp.json()["content"][0]["text"]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
     if not is_paid:
-        sb.table("user_usage").update({"total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
+        sb.table("user_usage").update({"free_messages_today": free_today + 1, "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
     else:
         sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4), "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
     return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_LIFETIME_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
