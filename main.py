@@ -239,7 +239,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-sonnet-4-5-20251022" if is_paid else "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
+                json={"model": "claude-sonnet-4-5" if is_paid else "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
             )
         resp.raise_for_status()
         reply = resp.json()["content"][0]["text"]
