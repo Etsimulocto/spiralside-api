@@ -215,7 +215,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
     if not usage.data:
         sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0, "total_messages": 0, "is_paid": False}).execute()
-        credits, is_paid, total_msgs = 0.0, False, 0
+        credits, is_paid, total_msgs, free_today = 0.0, False, 0, 0
     else:
         record = usage.data[0]
         credits, is_paid = record["credits"], record["is_paid"]
@@ -249,7 +249,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         sb.table("user_usage").update({"free_messages_today": free_today + 1, "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
     else:
         sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4), "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
-    return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_LIFETIME_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
+    return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_DAILY_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
 
 # ── SHEET ─────────────────────────────────────────────────
 @app.post("/sheet")
