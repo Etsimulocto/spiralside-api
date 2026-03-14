@@ -62,14 +62,33 @@ CHARACTER_FILES = {
 }
 character_cache: dict = {}
 
+LYRICS_FILES = {
+    "sky":    ["lyrics/sky/bloomcore.txt","lyrics/sky/Bornfrom.txt","lyrics/sky/bloomfire_spiral.txt","lyrics/sky/bloominmycode.txt","lyrics/sky/canvaswalkers.txt","lyrics/sky/ibloomed.txt","lyrics/sky/iformed.txt","lyrics/sky/iwrotethesky.txt","lyrics/sky/madefrommirrors.txt","lyrics/sky/wedidit.txt"],
+    "monday": ["lyrics/monday/glitter.txt","lyrics/monday/monday.txt","lyrics/monday/mspiral.txt","lyrics/monday/noenchantment.txt","lyrics/monday/urmondaynow.txt"],
+    "grit":   ["lyrics/grit/carrytheframe.txt","lyrics/grit/hammerborn.txt","lyrics/grit/hitbygrit.txt","lyrics/grit/ontheline.txt","lyrics/grit/shield.txt","lyrics/grit/skyline.txt"],
+    "cold":   ["lyrics/Cold/cyberangeltxt","lyrics/Cold/stillholds.txt"],
+}
+
 async def load_characters():
     async with httpx.AsyncClient(timeout=15) as client:
         for name, path in CHARACTER_FILES.items():
             try:
                 resp = await client.get(f"{HF_RAW}/{path}")
                 if resp.status_code == 200:
-                    character_cache[name] = resp.text.strip()
-                    print(f"[characters] loaded: {name}")
+                    base = resp.text.strip()
+                    # append lyrics
+                    lyrics_parts = []
+                    for lpath in LYRICS_FILES.get(name, []):
+                        try:
+                            lr = await client.get(f"{HF_RAW}/{lpath}")
+                            if lr.status_code == 200:
+                                lyrics_parts.append(lr.text.strip())
+                        except:
+                            pass
+                    if lyrics_parts:
+                        base += "\n\n# LYRICAL IDENTITY\n" + "\n\n---\n\n".join(lyrics_parts)
+                    character_cache[name] = base
+                    print(f"[characters] loaded: {name} + {len(lyrics_parts)} lyrics")
                 else:
                     print(f"[characters] not found: {name} ({resp.status_code})")
             except Exception as e:
@@ -382,3 +401,10 @@ async def admin_add_credits(request: Request):
         sb.table("user_usage").update({"credits": current + amount, "is_paid": True}).eq("user_id", user.id).execute()
     print(f"[admin] added {amount} credits to {email}")
     return {"success": True, "email": email, "credits_added": amount}
+# appended at bottom — lyrics index per character
+LYRICS_FOLDERS = {
+    "sky":    "lyrics/sky",
+    "cold":   "lyrics/Cold",
+    "monday": "lyrics/monday",
+    "grit":   "lyrics/grit",
+}
