@@ -270,13 +270,19 @@ async def update_sheet(req: ChatRequest, authorization: str = Header(None)):
 # ── PAYPAL: CREATE ORDER ──────────────────────────────────
 @app.post("/create-order")
 async def create_order(req: OrderRequest, authorization: str = Header(None)):
-    user_id, _ = await verify_user(authorization)
+    user_id, sb = await verify_user(authorization)
     if req.amount not in CREDIT_PACKS:
         raise HTTPException(status_code=400, detail="Invalid amount. Choose 5, 10, or 20.")
     try:
         order = await create_paypal_order(req.amount, user_id)
-        # Find the approval URL for redirect
         approve_url = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
+        # Store order in Supabase so capture can look up correct user reliably
+        sb.table("paypal_orders").insert({
+            "order_id": order["id"],
+            "user_id":  user_id,
+            "amount":   req.amount,
+            "credits":  CREDIT_PACKS[req.amount]
+        }).execute()
         return {"order_id": order["id"], "approve_url": approve_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PayPal error: {str(e)}")
@@ -289,20 +295,45 @@ async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
         result = await capture_paypal_order(req.order_id)
         if result["status"] != "COMPLETED":
             raise HTTPException(status_code=400, detail="Payment not completed.")
-        # Extract amount from custom_id: "user_id|amount"
-        custom_id = result["purchase_units"][0].get("custom_id", "")
-        parts = custom_id.split("|")
-        amount = parts[1] if len(parts) == 2 else "5"
-        credits_to_add = CREDIT_PACKS.get(amount, 500)
-        # Add credits to user
-        usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+        # Look up order from DB — do NOT trust PayPal custom_id round-trip
+        order_row = sb.table("paypal_orders").select("*").eq("order_id", req.order_id).execute()
+        if not order_row.data:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        order_data = order_row.data[0]
+        if order_data["captured"]:
+            raise HTTPException(status_code=400, detail="Order already captured.")
+        # Credit the correct user from DB record, not from token
+        real_user_id   = order_data["user_id"]
+        credits_to_add = order_data["credits"]
+        usage = sb.table("user_usage").select("*").eq("user_id", real_user_id).execute()
         if not usage.data:
-            sb.table("user_usage").insert({"user_id": user_id, "credits": float(credits_to_add), "free_messages_today": 0, "last_reset_date": str(date.today()), "is_paid": True}).execute()
+            sb.table("user_usage").insert({
+                "user_id": real_user_id,
+                "credits": float(credits_to_add),
+                "free_messages_today": 0,
+                "last_reset_date": str(date.today()),
+                "is_paid": True
+            }).execute()
+            new_balance = float(credits_to_add)
         else:
             current = usage.data[0]["credits"] or 0
-            sb.table("user_usage").update({"credits": current + credits_to_add, "is_paid": True}).eq("user_id", user_id).execute()
-        print(f"[payment] {user_id} purchased {credits_to_add} credits (${amount})")
-        return {"success": True, "credits_added": credits_to_add, "amount": amount}
+            new_balance = current + credits_to_add
+            sb.table("user_usage").update({
+                "credits": new_balance,
+                "is_paid": True
+            }).eq("user_id", real_user_id).execute()
+        # Mark order captured so it cant be replayed
+        sb.table("paypal_orders").update({"captured": True}).eq("order_id", req.order_id).execute()
+        # Log transaction
+        sb.table("credit_transactions").insert({
+            "user_id":  real_user_id,
+            "endpoint": "purchase",
+            "amount":   credits_to_add,
+            "balance":  new_balance,
+            "note":     f"paypal order {req.order_id} | ${order_data['amount']}"
+        }).execute()
+        print(f"[payment] {real_user_id} purchased {credits_to_add} credits (${order_data['amount']})")
+        return {"success": True, "credits_added": credits_to_add, "amount": order_data["amount"]}
     except HTTPException:
         raise
     except Exception as e:
