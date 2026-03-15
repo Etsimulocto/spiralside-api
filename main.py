@@ -168,13 +168,13 @@ async def verify_user(authorization: str):
         raise HTTPException(status_code=401, detail=f"Auth failed: {str(e)}")
 
 # ── REQUEST MODELS ────────────────────────────────────────
+
 class ChatRequest(BaseModel):
     message: str
     system_prompt: str
     vault_context: str = ""
     bot_name: str = ""
-
-model:    str = "haiku"
+    model:    str = "haiku"
 
 class OrderRequest(BaseModel):
     amount: str  # "5", "10", or "20"
