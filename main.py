@@ -87,7 +87,7 @@ async def load_characters():
                             pass
                     if lyrics_parts:
                         base += "\n\n# LYRICAL IDENTITY\n" + "\n\n---\n\n".join(lyrics_parts)
-                    character_cache[name] = base[:12000]  # cap at ~3k tokens
+                    character_cache[name] = base[:8000]  # cap at ~3k tokens
                     print(f"[characters] loaded: {name} + {len(lyrics_parts)} lyrics")
                 else:
                     print(f"[characters] not found: {name} ({resp.status_code})")
