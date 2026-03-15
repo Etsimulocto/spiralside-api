@@ -31,6 +31,7 @@ def check_rate_limit(user_id: str):
 
 # ── ENV VARS ──────────────────────────────────────────────
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY")
+OPENAI_API_KEY     = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL       = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY       = os.environ.get("SUPABASE_SERVICE_KEY")
 PAYPAL_CLIENT_ID   = os.environ.get("PAYPAL_CLIENT_ID")
@@ -237,13 +238,26 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         system += f"\n\nThe user has shared these files:\n{req.vault_context}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-sonnet-4-5" if is_paid else "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
-            )
-        resp.raise_for_status()
-        reply = resp.json()["content"][0]["text"]
+            if req.model == "4o":
+                # Route to OpenAI gpt-4o-mini — best for Sky's character work
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "content-type": "application/json"},
+                    json={"model": "gpt-4o-mini", "max_tokens": 1000,
+                          "messages": [{"role": "system", "content": system}, {"role": "user", "content": req.message}]}
+                )
+                resp.raise_for_status()
+                reply = resp.json()["choices"][0]["message"]["content"]
+            else:
+                # Anthropic — haiku or sonnet
+                model_str = "claude-sonnet-4-5" if req.model == "sonnet" else "claude-haiku-4-5-20251001"
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": model_str, "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": req.message}]}
+                )
+                resp.raise_for_status()
+                reply = resp.json()["content"][0]["text"]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
     if not is_paid:
