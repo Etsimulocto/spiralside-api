@@ -174,6 +174,8 @@ class ChatRequest(BaseModel):
     vault_context: str = ""
     bot_name: str = ""
 
+model:    str = "haiku"
+
 class OrderRequest(BaseModel):
     amount: str  # "5", "10", or "20"
 
