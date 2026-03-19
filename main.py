@@ -489,6 +489,79 @@ async def code_assistant(req: CodeRequest, authorization: str = Header(None)):
 
 
 # ── RELOAD CHARACTERS ─────────────────────────────────────
+
+class SendGiftRequest(BaseModel):
+    credits: int
+
+@app.post('/send-gift')
+async def send_gift(req: SendGiftRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    if req.credits < 1000:
+        raise HTTPException(status_code=400, detail='Minimum gift is 1,000 credits.')
+    usage = sb.table('user_usage').select('*').eq('user_id', user_id).execute()
+    if not usage.data:
+        raise HTTPException(status_code=402, detail='No credits found.')
+    current = usage.data[0]['credits'] or 0
+    if current < req.credits:
+        raise HTTPException(status_code=402, detail=f'Not enough credits. You have {int(current):,}.')
+    import random, string
+    chars = string.ascii_uppercase + string.digits
+    code = 'SPIRAL-' + ''.join(random.choices(chars, k=4)) + '-' + ''.join(random.choices(chars, k=4))
+    sb.table('user_usage').update({'credits': current - req.credits}).eq('user_id', user_id).execute()
+    sb.table('gift_codes').insert({
+        'code': code,
+        'credits': req.credits,
+        'amount_paid': 0,
+        'created_by': user_id,
+        'deducted_from': user_id,
+    }).execute()
+    return {'success': True, 'code': code, 'credits': req.credits}
+import random, string as _string
+
+class GiftOrderRequest(BaseModel):
+    order_id: str
+
+class RedeemRequest(BaseModel):
+    code: str
+
+@app.post("/create-gift")
+async def create_gift(req: GiftOrderRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    try:
+        result = await capture_paypal_order(req.order_id)
+        if result["status"] != "COMPLETED":
+            raise HTTPException(status_code=400, detail="Payment not completed.")
+        chars = _string.ascii_uppercase + _string.digits
+        code = "SPIRAL-" + "".join(random.choices(chars,k=4)) + "-" + "".join(random.choices(chars,k=4))
+        sb.table("gift_codes").insert({"code":code,"credits":500000,"amount_paid":5.00,"created_by":user_id}).execute()
+        return {"success":True,"code":code,"credits":500000}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(status_code=500, detail=f"Gift error: {str(e)}")
+
+@app.post("/redeem-gift")
+async def redeem_gift(req: RedeemRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    code = req.code.strip().upper()
+    gift = sb.table("gift_codes").select("*").eq("code", code).execute()
+    if not gift.data:
+        raise HTTPException(status_code=404, detail="Gift code not found.")
+    g = gift.data[0]
+    if g["redeemed_by"]:
+        raise HTTPException(status_code=400, detail="Code already redeemed.")
+    if g["created_by"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot redeem your own code.")
+    credits_to_add = g["credits"]
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    today = str(date.today())
+    if not usage.data:
+        sb.table("user_usage").insert({"user_id":user_id,"credits":float(credits_to_add),"free_messages_today":0,"last_reset_date":today,"is_paid":True}).execute()
+    else:
+        current = usage.data[0]["credits"] or 0
+        sb.table("user_usage").update({"credits":current+credits_to_add,"is_paid":True}).eq("user_id",user_id).execute()
+    sb.table("gift_codes").update({"redeemed_by":user_id,"redeemed_at":str(date.today())}).eq("code",code).execute()
+    return {"success":True,"credits_added":credits_to_add,"code":code}
+
+
 @app.post("/reload-characters")
 async def reload_characters():
     await load_characters()
