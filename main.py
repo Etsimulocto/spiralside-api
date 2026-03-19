@@ -42,13 +42,21 @@ PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
 FREE_DAILY_LIMIT = 10  # resets every day
-CREDIT_COST      = 0.01
+MARGIN = 1.17
+MODEL_RATES = {
+    "haiku ": (0.80, 4.00),
+    "4o ": (0.15, 0.60),
+    "sonnet ": (3.00, 15.00),
+}
+def calc_cost(mk, it, ot):
+    r = MODEL_RATES.get(mk, MODEL_RATES["haiku "])
+    return round((r[0]*it+r[1]*ot)/1000000*MARGIN/0.0001, 2)
 
 # Credit packs: amount in USD -> credits granted
 CREDIT_PACKS = {
-    "5":  500,
-    "10": 1100,
-    "20": 2400,
+    "5":  50000,
+    "10": 110000,
+    "20": 240000,
 }
 
 # ── HF CHARACTER FILES ────────────────────────────────────
@@ -231,7 +239,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         if free_today >= FREE_DAILY_LIMIT:
             raise HTTPException(status_code=429, detail=f"Free limit reached ({FREE_DAILY_LIMIT}/day). Add credits to continue.")
     else:
-        if credits < CREDIT_COST:
+        if credits < 1:  # floor 1cr
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
     bot_name_lower = (req.bot_name or "").strip().lower()
     character_prompt = character_cache.get(bot_name_lower)
@@ -265,8 +273,10 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     if not is_paid:
         sb.table("user_usage").update({"free_messages_today": free_today + 1, "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
     else:
-        sb.table("user_usage").update({"credits": round(credits - CREDIT_COST, 4), "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
-    return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_DAILY_LIMIT, "credits_remaining": round(credits - CREDIT_COST, 4) if is_paid else None}}
+        model_key = req.model if hasattr(req,"model") and req.model in MODEL_RATES else "haiku"
+        actual_cost = calc_cost(model_key, 500, 200)
+        sb.table("user_usage").update({"credits": round(credits - actual_cost, 2), "total_messages": total_msgs + 1}).eq("user_id", user_id).execute()
+    return {"reply": reply, "usage": {"is_paid": is_paid, "total_messages": total_msgs + 1, "lifetime_limit": FREE_DAILY_LIMIT, "credits_remaining": round(credits - actual_cost, 2) if is_paid else None}}
 
 # ── SHEET ─────────────────────────────────────────────────
 @app.post("/sheet")
