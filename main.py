@@ -54,9 +54,9 @@ def calc_cost(mk, it, ot):
 
 # Credit packs: amount in USD -> credits granted
 CREDIT_PACKS = {
-    "5":  50000,
-    "10": 110000,
-    "20": 240000,
+    "5":  500000,
+    "10": 1100000,
+    "20": 2400000,
 }
 
 # ── HF CHARACTER FILES ────────────────────────────────────
