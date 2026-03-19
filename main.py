@@ -419,6 +419,65 @@ async def generate_image(req: ImageRequest, authorization: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
+
+# ── CODE ASSISTANT ────────────────────────────────────────
+class CodeRequest(BaseModel):
+    messages: list          # [{ role, content }, ...]  full history
+    mode:     str = "general"
+    model:    str = "haiku"  # haiku | sonnet | opus
+    system:   str = ""       # injected from frontend mode preset
+
+CODE_MODELS = {
+    "haiku":  {"model": "claude-haiku-4-5-20251001", "cost": 0.01, "paid_only": False},
+    "sonnet": {"model": "claude-sonnet-4-6",          "cost": 0.06, "paid_only": True },
+    "opus":   {"model": "claude-opus-4-6",            "cost": 0.15, "paid_only": True },
+}
+
+@app.post("/code")
+async def code_assistant(req: CodeRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    today = str(date.today())
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if not usage.data:
+        sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0, "free_messages_today": 0, "last_reset_date": today, "is_paid": False}).execute()
+        free_count, credits, is_paid = 0, 0.0, False
+    else:
+        record     = usage.data[0]
+        credits    = record["credits"]
+        is_paid    = record["is_paid"]
+        free_count = record["free_messages_today"]
+        if record.get("last_reset_date") != today:
+            free_count = 0
+            sb.table("user_usage").update({"free_messages_today": 0, "last_reset_date": today}).eq("user_id", user_id).execute()
+    model_key = req.model if req.model in CODE_MODELS else "haiku"
+    model_cfg = CODE_MODELS[model_key]
+    cost      = model_cfg["cost"]
+    if not is_paid:
+        if model_cfg["paid_only"]:
+            raise HTTPException(status_code=402, detail=f"The {model_key} model requires credits. Add credits to unlock.")
+        if free_count >= FREE_DAILY_LIMIT:
+            raise HTTPException(status_code=429, detail=f"Free limit reached ({FREE_DAILY_LIMIT}/day). Add credits to continue.")
+    else:
+        if credits < cost:
+            raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": model_cfg["model"], "max_tokens": 4096, "system": req.system, "messages": req.messages}
+            )
+        resp.raise_for_status()
+        result = resp.json()["content"][0]["text"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
+    if not is_paid:
+        sb.table("user_usage").update({"free_messages_today": free_count + 1}).eq("user_id", user_id).execute()
+    else:
+        sb.table("user_usage").update({"credits": round(credits - cost, 4)}).eq("user_id", user_id).execute()
+    return {"result": result, "usage": {"is_paid": is_paid, "credits_remaining": round(credits - cost, 4) if is_paid else None, "free_messages_today": free_count + 1 if not is_paid else None, "free_limit": FREE_DAILY_LIMIT}}
+
+
 # ── RELOAD CHARACTERS ─────────────────────────────────────
 @app.post("/reload-characters")
 async def reload_characters():
