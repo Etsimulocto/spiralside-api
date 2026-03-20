@@ -190,6 +190,12 @@ class OrderRequest(BaseModel):
 class CaptureRequest(BaseModel):
     order_id: str
 
+class VaultFileRecord(BaseModel):
+    id: str           # UUID generated client-side so IDB and DB stay in sync
+    name: str         # original filename
+    size: int         # bytes
+    mime_type: str    # e.g. text/plain, image/png
+
 class ImageRequest(BaseModel):
     prompt: str
     negative_prompt: str = ""
@@ -606,6 +612,54 @@ async def redeem_gift(req: RedeemRequest, authorization: str = Header(None)):
         sb.table("user_usage").update({"credits":current+credits_to_add,"is_paid":True}).eq("user_id",user_id).execute()
     sb.table("gift_codes").update({"redeemed_by":user_id,"redeemed_at":str(date.today())}).eq("code",code).execute()
     return {"success":True,"credits_added":credits_to_add,"code":code}
+
+
+# ── VAULT: LIST ────────────────────────────────────────────
+# Returns metadata list for user's vault files (no content — stored in IDB)
+@app.get("/vault/list")
+async def vault_list(authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    try:
+        result = sb.table("vault_files") \
+            .select("id,name,size,mime_type,created_at") \
+            .eq("user_id", user_id) \
+            .order("created_at", desc=False) \
+            .execute()
+        return {"files": result.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Vault list error: {str(e)}")
+
+# ── VAULT: ADD ─────────────────────────────────────────────
+# Upserts a metadata record; content stored locally in client IDB
+@app.post("/vault/add")
+async def vault_add(req: VaultFileRecord, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    try:
+        sb.table("vault_files").upsert({
+            "id":        req.id,
+            "user_id":   user_id,
+            "name":      req.name,
+            "size":      req.size,
+            "mime_type": req.mime_type,
+        }).execute()
+        return {"success": True, "id": req.id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Vault add error: {str(e)}")
+
+# ── VAULT: DELETE ──────────────────────────────────────────
+# Removes metadata record; client responsible for IDB cleanup
+@app.delete("/vault/delete/{file_id}")
+async def vault_delete(file_id: str, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    try:
+        sb.table("vault_files") \
+            .delete() \
+            .eq("id", file_id) \
+            .eq("user_id", user_id) \
+            .execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Vault delete error: {str(e)}")
 
 
 @app.post("/reload-characters")
