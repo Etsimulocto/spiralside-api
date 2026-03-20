@@ -439,7 +439,7 @@ IMAGE_MODEL_COSTS = {
 }
 HF_MODELS = {
     "schnell": "black-forest-labs/FLUX.1-schnell",
-    "dev":     "black-forest-labs/FLUX.1-dev",
+    "lightning": "ByteDance/SDXL-Lightning",
     "sdxl":    "stabilityai/stable-diffusion-xl-base-1.0",
 }
 HF_API = "https://router.huggingface.co/hf-inference"
