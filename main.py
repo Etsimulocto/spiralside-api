@@ -371,63 +371,6 @@ IMAGE_FREE_DAILY  = 3
 IMAGE_CREDIT_COST = 5
 HF_FLUX = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
 
-@app.post("/generate-image")
-async def generate_image(req: ImageRequest, authorization: str = Header(None)):
-    user_id, sb = await verify_user(authorization)
-    check_rate_limit(user_id)
-    if not HF_TOKEN:
-        raise HTTPException(status_code=500, detail="Image generation not configured.")
-    today = str(date.today())
-    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
-    if not usage.data:
-        raise HTTPException(status_code=403, detail="No usage record found.")
-    record    = usage.data[0]
-    is_paid   = record.get("is_paid", False)
-    credits   = record.get("credits", 0)
-    img_today = record.get("images_today", 0)
-    img_date  = record.get("images_reset_date", "")
-    if img_date != today:
-        img_today = 0
-        sb.table("user_usage").update({"images_today": 0, "images_reset_date": today}).eq("user_id", user_id).execute()
-    if not is_paid:
-        if img_today >= IMAGE_FREE_DAILY:
-            raise HTTPException(status_code=429, detail=f"Free image limit ({IMAGE_FREE_DAILY}/day) reached. Add credits for more.")
-        req.width = 512
-        req.height = 512
-    else:
-        if credits < IMAGE_CREDIT_COST:
-            raise HTTPException(status_code=402, detail="Not enough credits. Need 5 per image.")
-        req.width  = min(max(req.width,  256), 1024)
-        req.height = min(max(req.height, 256), 1024)
-    try:
-        payload = {"inputs": req.prompt}
-        if req.negative_prompt:
-            payload["negative_prompt"] = req.negative_prompt
-        payload["width"]  = req.width
-        payload["height"] = req.height
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(
-                HF_FLUX,
-                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                json=payload
-            )
-        if r.status_code == 503:
-            raise HTTPException(status_code=503, detail="Model loading, try again in 20 seconds.")
-        if not r.is_success:
-            raise HTTPException(status_code=500, detail=f"HF error {r.status_code}: {r.text[:200]}")
-        if is_paid:
-            sb.table("user_usage").update({"credits": round(credits - IMAGE_CREDIT_COST, 4)}).eq("user_id", user_id).execute()
-        else:
-            sb.table("user_usage").update({"images_today": img_today + 1}).eq("user_id", user_id).execute()
-        import base64
-        img_b64 = base64.b64encode(r.content).decode()
-        return {"image": img_b64, "width": req.width, "height": req.height, "is_paid": is_paid,
-                "free_images_used": img_today + 1 if not is_paid else None,
-                "free_images_limit": IMAGE_FREE_DAILY if not is_paid else None}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 
 # ── CODE ASSISTANT ────────────────────────────────────────
