@@ -1,0 +1,103 @@
+IMAGE_MODEL_COSTS = {
+    "schnell": 500,
+    "dev":     1000,
+    "sdxl":    1500,
+    "dalle3":  3000,
+}
+HF_MODELS = {
+    "schnell": "black-forest-labs/FLUX.1-schnell",
+    "dev":     "black-forest-labs/FLUX.1-dev",
+    "sdxl":    "stabilityai/stable-diffusion-xl-base-1.0",
+}
+HF_API = "https://api-inference.huggingface.co"
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+FREE_IMAGE_LIMIT = 3
+
+class ImageRequest(BaseModel):
+    prompt: str
+    negative_prompt: str = ""
+    width: int = 512
+    height: int = 512
+    model: str = "schnell"
+
+@app.post("/generate-image")
+async def generate_image(req: ImageRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    today = str(date.today())
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if not usage.data:
+        sb.table("user_usage").insert({"user_id": user_id, "credits": 0.0,
+            "free_messages_today": 0, "last_reset_date": today,
+            "is_paid": False, "free_images_today": 0}).execute()
+        free_img, credits, is_paid = 0, 0.0, False
+    else:
+        record = usage.data[0]
+        credits, is_paid = record["credits"], record["is_paid"]
+        free_img = record.get("free_images_today") or 0
+        if record.get("last_reset_date") != today:
+            free_img = 0
+            sb.table("user_usage").update(
+                {"free_images_today": 0, "last_reset_date": today}
+            ).eq("user_id", user_id).execute()
+    model_key = req.model if req.model in IMAGE_MODEL_COSTS else "schnell"
+    cost = IMAGE_MODEL_COSTS[model_key]
+    if not is_paid:
+        if free_img >= FREE_IMAGE_LIMIT:
+            raise HTTPException(status_code=429,
+                detail=f"Free image limit reached ({FREE_IMAGE_LIMIT}/day). Add credits to continue.")
+    else:
+        if credits < cost:
+            raise HTTPException(status_code=402,
+                detail=f"Need {cost} cr for this model. You have {int(credits)} cr.")
+    w = max(256, min(1024, req.width))
+    h = max(256, min(1024, req.height))
+    if not is_paid:
+        w, h = 512, 512
+    import base64
+    image_b64 = None
+    if model_key == "dalle3" and OPENAI_API_KEY:
+        size_str = "1024x1024"
+        if w == 1024 and h == 768: size_str = "1792x1024"
+        if w == 768 and h == 1024: size_str = "1024x1792"
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/images/generations",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "dall-e-3", "prompt": req.prompt, "n": 1,
+                      "size": size_str, "response_format": "b64_json"}
+            )
+            resp.raise_for_status()
+            image_b64 = resp.json()["data"][0]["b64_json"]
+    elif model_key in HF_MODELS:
+        hf_model = HF_MODELS[model_key]
+        payload = {"inputs": req.prompt, "parameters": {"width": w, "height": h}}
+        if req.negative_prompt:
+            payload["parameters"]["negative_prompt"] = req.negative_prompt
+        headers = {"Content-Type": "application/json"}
+        if HF_TOKEN:
+            headers["Authorization"] = f"Bearer {HF_TOKEN}"
+        async with httpx.AsyncClient(timeout=90) as client:
+            resp = await client.post(
+                f"{HF_API}/models/{hf_model}",
+                headers=headers, json=payload
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502,
+                    detail=f"HF error {resp.status_code}: {resp.text[:200]}")
+            image_b64 = base64.b64encode(resp.content).decode()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_key}")
+    if not is_paid:
+        sb.table("user_usage").update({"free_images_today": free_img + 1}).eq("user_id", user_id).execute()
+    else:
+        sb.table("user_usage").update({"credits": round(credits - cost, 2)}).eq("user_id", user_id).execute()
+    return {
+        "image": image_b64,
+        "width": w, "height": h,
+        "model": model_key, "cost": cost,
+        "is_paid": is_paid,
+        "credits_remaining": round(credits - cost, 2) if is_paid else None,
+        "free_images_used": free_img + 1 if not is_paid else None,
+        "free_images_limit": FREE_IMAGE_LIMIT,
+    }
