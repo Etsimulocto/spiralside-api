@@ -442,7 +442,7 @@ HF_MODELS = {
     "dev":     "black-forest-labs/FLUX.1-dev",
     "sdxl":    "stabilityai/stable-diffusion-xl-base-1.0",
 }
-HF_API = "https://api-inference.huggingface.co"
+HF_API = "https://router.huggingface.co"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 FREE_IMAGE_LIMIT = 3
