@@ -661,6 +661,58 @@ async def vault_delete(file_id: str, authorization: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vault delete error: {str(e)}")
 
+# ── ELEVENLABS TTS ────────────────────────────────────────────
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+
+# Voice IDs per character — add Cold/Monday/Grit when ready
+VOICE_IDS = {
+    "sky":    "P0TzU2rKihAPOTBllVtJ",
+}
+
+class TTSRequest(BaseModel):
+    text: str
+    character: str = "sky"
+
+@app.post("/tts")
+async def text_to_speech(req: TTSRequest, authorization: str = Header(None)):
+    await verify_user(authorization)
+    if not ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=500, detail="TTS not configured")
+    voice_id = VOICE_IDS.get(req.character.lower(), VOICE_IDS["sky"])
+    # Truncate to 500 chars to keep costs reasonable
+    text = req.text[:500]
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": text,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {
+                        "stability": 0.45,
+                        "similarity_boost": 0.75,
+                        "style": 0.3,
+                        "use_speaker_boost": True,
+                    }
+                }
+            )
+        if not resp.is_success:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs error: {resp.status_code}")
+        # Return audio as base64 so frontend can play it anywhere
+        import base64
+        audio_b64 = base64.b64encode(resp.content).decode()
+        return {"audio": audio_b64, "format": "mp3"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
+
+
+
 
 @app.post("/reload-characters")
 async def reload_characters():
