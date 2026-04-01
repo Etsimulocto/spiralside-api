@@ -251,7 +251,11 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
     bot_name_lower = (req.bot_name or "").strip().lower()
     character_prompt = character_cache.get(bot_name_lower)
-    system = character_prompt if character_prompt else req.system_prompt
+    system = (req.system_prompt.rstrip() + "
+
+---
+
+" + character_prompt) if character_prompt else req.system_prompt
     if req.vault_context:
         system += f"\n\nThe user has shared these files:\n{req.vault_context}"
     try:
