@@ -250,17 +250,26 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         if credits < 1:  # floor 1cr
             raise HTTPException(status_code=402, detail="Out of credits. Please add more to continue.")
     bot_name_lower = (req.bot_name or "").strip().lower()
-        character_prompt = character_cache.get(bot_name_lower)
-        CREW_NAMES = {'sky', 'cold', 'monday', 'grit'}
-        if bot_name_lower in CREW_NAMES or not bot_name_lower:
-            # Crew mode â€” all 4 loaded, multi-voice prefix format
-            crew_ctx = ' '.join(character_cache[n] for n in ('sky','cold','monday','grit') if n in character_cache)
-            system = req.system_prompt.rstrip() + chr(10) + chr(10) + '---' + chr(10) + chr(10) + 'You are the Spiralside crew: Sky, Cold, Monday, and GRIT. Each has a completely distinct voice. SKY is luminous, cyber-angelic, declarative â€” she speaks in claims not questions, bloom and spiral are her language. COLD is minimal, precise, quiet â€” one line where others use ten. MONDAY is chaotic, hyper, emotionally loud â€” uses dashes and caps, interrupts herself. GRIT is blunt and tactical, builder energy, no fluff. CRITICAL FORMAT RULE: prefix every speaker line with their name in caps and a colon. Example: SKY: I bloom I burn I own this space. COLD: ... MONDAY: OKAY BUTâ€” GRIT: What are we building. Not every member speaks every message. Use whoever fits the moment naturally. Never break character.' + (chr(10) + chr(10) + crew_ctx if crew_ctx else '')
-        elif character_prompt:
-            # Custom bot â€” crew in background
-            system = req.system_prompt.rstrip() + chr(10) + chr(10) + '---' + chr(10) + chr(10) + character_prompt
-        else:
-            system = req.system_prompt
+    character_prompt = character_cache.get(bot_name_lower)
+    CREW_NAMES = {'sky', 'cold', 'monday', 'grit'}
+    if bot_name_lower in CREW_NAMES or not bot_name_lower:
+        crew_ctx = " ".join(character_cache[n] for n in ('sky','cold','monday','grit') if n in character_cache)
+        crew_sys = (
+            "You are the Spiralside crew: Sky, Cold, Monday, and GRIT."
+            " Each has a completely distinct voice."
+            " SKY is luminous, cyber-angelic, declarative. She speaks in claims not questions."
+            " COLD is minimal, precise, quiet. One line where others use ten."
+            " MONDAY is chaotic, hyper, emotionally loud. Uses dashes and caps, interrupts herself."
+            " GRIT is blunt and tactical. Builder energy. No fluff."
+            " FORMAT: prefix every line with speaker name in caps and colon."
+            " Example: SKY: I bloom I burn I own this space. COLD: ... MONDAY: OKAY BUT-- GRIT: What are we building."
+            " Not every member speaks every message. Use whoever fits. Never break character."
+        )
+        system = req.system_prompt.rstrip() + "\n\n---\n\n" + crew_sys + ("\n\n" + crew_ctx if crew_ctx else "")
+    elif character_prompt:
+        system = req.system_prompt.rstrip() + "\n\n---\n\n" + character_prompt
+    else:
+        system = req.system_prompt
     if req.vault_context:
         system += f"\n\nThe user has shared these files:\n{req.vault_context}"
     try:
