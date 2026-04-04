@@ -646,7 +646,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
             img_resp = await client.get(image_data)
             img_resp.raise_for_status()
             image_bytes = img_resp.content
-    image_b64 = base64.b64encode(image_bytes).decode()
+    image_b64 = _b64.b64encode(image_bytes).decode()
     full_prompt = req.prompt or "cinematic motion, smooth camera movement"
     # HF image-to-video REST API: send image as raw bytes body, prompt in X-Wait-For-Model header
     # Correct format per HF docs: raw image bytes as body, parameters as query string
