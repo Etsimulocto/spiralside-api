@@ -656,13 +656,8 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 HF_API_URL,
-                headers={
-                    "Authorization": f"Bearer {HF_TOKEN}",
-                    "Content-Type": "image/jpeg",
-                    "X-Wait-For-Model": "true",
-                },
-                json={"inputs": full_prompt, "parameters": {"num_frames": min(req.duration * 16, 97), "num_inference_steps": 25, "guidance_scale": 3.5, "negative_prompt": req.negative_prompt}},
-                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json", "X-Wait-For-Model": "true"}
+                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json", "X-Wait-For-Model": "true"},
+                json={"inputs": full_prompt, "parameters": {"num_frames": min(req.duration * 16, 97), "num_inference_steps": 25, "guidance_scale": 3.5, "negative_prompt": req.negative_prompt}}
             )
         print(f"[clip] HF response status={resp.status_code}, len={len(resp.content)}")
     except httpx.TimeoutException:
