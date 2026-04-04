@@ -650,7 +650,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     full_prompt = req.prompt or "cinematic motion, smooth camera movement"
     # HF image-to-video REST API: send image as raw bytes body, prompt in X-Wait-For-Model header
     # Correct format per HF docs: raw image bytes as body, parameters as query string
-    HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid-xt"
+    HF_API_URL = "https://api-inference.huggingface.co/models/Lightricks/LTX-Video"
     print(f"[clip] calling HF API, image_bytes len={len(image_bytes)}, prompt={full_prompt[:50]}")
     try:
         async with httpx.AsyncClient(timeout=300) as client:
@@ -661,14 +661,8 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
                     "Content-Type": "image/jpeg",
                     "X-Wait-For-Model": "true",
                 },
-                content=image_bytes,
-                params={
-                    "prompt": full_prompt,
-                    "negative_prompt": req.negative_prompt,
-                    "num_frames": str(min(req.duration * 16, 81)),
-                    "num_inference_steps": "20",
-                    "guidance_scale": "5.0",
-                }
+                json={"inputs": full_prompt, "parameters": {"num_frames": min(req.duration * 16, 97), "num_inference_steps": 25, "guidance_scale": 3.5, "negative_prompt": req.negative_prompt}},
+                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json", "X-Wait-For-Model": "true"}
             )
         print(f"[clip] HF response status={resp.status_code}, len={len(resp.content)}")
     except httpx.TimeoutException:
