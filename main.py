@@ -632,6 +632,11 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     HF_TOKEN = os.environ.get("HF_TOKEN")
     if not HF_TOKEN:
         raise HTTPException(status_code=500, detail="HF_TOKEN not configured.")
+    try:
+      _dbg = f"hf_token_len={len(HF_TOKEN)}, image_url_len={len(req.image_url)}, starts_data={req.image_url.startswith('data:')}"
+    except Exception as _e:
+      _dbg = str(_e)
+    print(f"[clip-debug] {_dbg}")
     image_data = req.image_url
     if image_data.startswith("data:"):
         header, b64 = image_data.split(",", 1)
@@ -646,6 +651,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     # HF image-to-video REST API: send image as raw bytes body, prompt in X-Wait-For-Model header
     # Correct format per HF docs: raw image bytes as body, parameters as query string
     HF_API_URL = "https://api-inference.huggingface.co/models/Wan-AI/Wan2.1-I2V-14B-480P"
+    print(f"[clip] calling HF API, image_bytes len={len(image_bytes)}, prompt={full_prompt[:50]}")
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
@@ -659,17 +665,22 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
                 params={
                     "prompt": full_prompt,
                     "negative_prompt": req.negative_prompt,
-                    "num_frames": min(req.duration * 16, 81),
-                    "num_inference_steps": 20,
-                    "guidance_scale": 5.0,
+                    "num_frames": str(min(req.duration * 16, 81)),
+                    "num_inference_steps": "20",
+                    "guidance_scale": "5.0",
                 }
             )
+        print(f"[clip] HF response status={resp.status_code}, len={len(resp.content)}")
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Video generation timed out. Try again.")
+    except Exception as e:
+        print(f"[clip] httpx error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Request error: {type(e).__name__}: {str(e)[:200]}")
     if resp.status_code == 503:
         raise HTTPException(status_code=503, detail="Model loading, retry in 30s.")
     if not resp.ok:
         err = resp.text[:300] if resp.text else str(resp.status_code)
+        print(f"[clip] HF error: {err}")
         raise HTTPException(status_code=500, detail=f"HF error {resp.status_code}: {err}")
     video_b64 = base64.b64encode(resp.content).decode()
     sb.table("user_usage").update({"credits": round(credits - CLIP_COST, 4)}).eq("user_id", user_id).execute()
