@@ -608,6 +608,62 @@ async def generate_image(req: ImageRequest, authorization: str = Header(None)):
         "free_images_used": free_img + 1 if not is_paid else None,
         "free_images_limit": FREE_IMAGE_LIMIT,
     }
+# ── GENERATE CLIP (WAN 2.1 image-to-video) ────────────────
+class ClipRequest(BaseModel):
+    image_url: str
+    prompt: str = ""
+    duration: int = 5
+    negative_prompt: str = "blurry, low quality, ugly, deformed, watermark"
+
+@app.post("/generate-clip")
+async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if not usage.data:
+        raise HTTPException(status_code=402, detail="No usage record.")
+    record = usage.data[0]
+    credits = record["credits"]
+    is_paid = record["is_paid"]
+    CLIP_COST = 5
+    if not is_paid:
+        raise HTTPException(status_code=402, detail="Clip generation requires credits.")
+    if credits < CLIP_COST:
+        raise HTTPException(status_code=402, detail=f"Need {CLIP_COST} credits for clip generation.")
+    HF_TOKEN = os.environ.get("HF_TOKEN")
+    if not HF_TOKEN:
+        raise HTTPException(status_code=500, detail="HF_TOKEN not configured.")
+    import base64 as b64mod
+    image_data = req.image_url
+    if image_data.startswith("data:"):
+        header, b64 = image_data.split(",", 1)
+        image_bytes = b64mod.b64decode(b64)
+    else:
+        async with httpx.AsyncClient(timeout=30) as client:
+            img_resp = await client.get(image_data)
+            img_resp.raise_for_status()
+            image_bytes = img_resp.content
+    image_b64 = b64mod.b64encode(image_bytes).decode()
+    full_prompt = req.prompt or "cinematic motion, smooth camera movement"
+    HF_API_URL = "https://api-inference.huggingface.co/models/Wan-AI/Wan2.1-I2V-14B-480P"
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(
+                HF_API_URL,
+                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+                json={"inputs": full_prompt, "parameters": {"image": image_b64, "num_frames": min(req.duration * 16, 81), "negative_prompt": req.negative_prompt, "num_inference_steps": 20, "guidance_scale": 5.0}}
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Video generation timed out. Try again.")
+    if resp.status_code == 503:
+        raise HTTPException(status_code=503, detail="Model loading, retry in 30s.")
+    if not resp.ok:
+        raise HTTPException(status_code=500, detail=f"HF error: {resp.text[:200]}")
+    video_b64 = b64mod.b64encode(resp.content).decode()
+    sb.table("user_usage").update({"credits": round(credits - CLIP_COST, 4)}).eq("user_id", user_id).execute()
+    print(f"[clip] {user_id} {len(resp.content)} bytes -{CLIP_COST}cr")
+    return {"video_url": f"data:video/mp4;base64,{video_b64}", "bytes": len(resp.content), "credits_used": CLIP_COST, "credits_remaining": round(credits - CLIP_COST, 4)}
+
+
 # ── RELOAD CHARACTERS ─────────────────────────────────────
 
 class SendGiftRequest(BaseModel):
