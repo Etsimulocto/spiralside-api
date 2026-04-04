@@ -650,7 +650,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     full_prompt = req.prompt or "cinematic motion, smooth camera movement"
     # HF image-to-video REST API: send image as raw bytes body, prompt in X-Wait-For-Model header
     # Correct format per HF docs: raw image bytes as body, parameters as query string
-    HF_API_URL = "https://api-inference.huggingface.co/models/Wan-AI/Wan2.1-I2V-14B-480P"
+    HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid-xt"
     print(f"[clip] calling HF API, image_bytes len={len(image_bytes)}, prompt={full_prompt[:50]}")
     try:
         async with httpx.AsyncClient(timeout=300) as client:
@@ -676,9 +676,9 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     except Exception as e:
         print(f"[clip] httpx error: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"Request error: {type(e).__name__}: {str(e)[:200]}")
-    if resp.status_code == 503:
+    if resp.status_code in (503, 410):
         raise HTTPException(status_code=503, detail="Model loading, retry in 30s.")
-    if not resp.ok:
+    if not resp.is_success:
         err = resp.text[:300] if resp.text else str(resp.status_code)
         print(f"[clip] HF error: {err}")
         raise HTTPException(status_code=500, detail=f"HF error {resp.status_code}: {err}")
