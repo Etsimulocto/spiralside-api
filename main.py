@@ -643,20 +643,34 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
             image_bytes = img_resp.content
     image_b64 = base64.b64encode(image_bytes).decode()
     full_prompt = req.prompt or "cinematic motion, smooth camera movement"
+    # HF image-to-video REST API: send image as raw bytes body, prompt in X-Wait-For-Model header
+    # Correct format per HF docs: raw image bytes as body, parameters as query string
     HF_API_URL = "https://api-inference.huggingface.co/models/Wan-AI/Wan2.1-I2V-14B-480P"
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 HF_API_URL,
-                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                json={"inputs": full_prompt, "parameters": {"image": image_b64, "num_frames": min(req.duration * 16, 81), "negative_prompt": req.negative_prompt, "num_inference_steps": 20, "guidance_scale": 5.0}}
+                headers={
+                    "Authorization": f"Bearer {HF_TOKEN}",
+                    "Content-Type": "image/jpeg",
+                    "X-Wait-For-Model": "true",
+                },
+                content=image_bytes,
+                params={
+                    "prompt": full_prompt,
+                    "negative_prompt": req.negative_prompt,
+                    "num_frames": min(req.duration * 16, 81),
+                    "num_inference_steps": 20,
+                    "guidance_scale": 5.0,
+                }
             )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Video generation timed out. Try again.")
     if resp.status_code == 503:
         raise HTTPException(status_code=503, detail="Model loading, retry in 30s.")
     if not resp.ok:
-        raise HTTPException(status_code=500, detail=f"HF error: {resp.text[:200]}")
+        err = resp.text[:300] if resp.text else str(resp.status_code)
+        raise HTTPException(status_code=500, detail=f"HF error {resp.status_code}: {err}")
     video_b64 = base64.b64encode(resp.content).decode()
     sb.table("user_usage").update({"credits": round(credits - CLIP_COST, 4)}).eq("user_id", user_id).execute()
     print(f"[clip] {user_id} {len(resp.content)} bytes -{CLIP_COST}cr")
