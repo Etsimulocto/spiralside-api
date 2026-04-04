@@ -640,7 +640,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     image_data = req.image_url
     if image_data.startswith("data:"):
         header, b64 = image_data.split(",", 1)
-        image_bytes = base64.b64decode(b64)
+        import base64 as _b64; image_bytes = _b64.b64decode(b64)
     else:
         async with httpx.AsyncClient(timeout=30) as client:
             img_resp = await client.get(image_data)
@@ -682,7 +682,7 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
         err = resp.text[:300] if resp.text else str(resp.status_code)
         print(f"[clip] HF error: {err}")
         raise HTTPException(status_code=500, detail=f"HF error {resp.status_code}: {err}")
-    video_b64 = base64.b64encode(resp.content).decode()
+    video_b64 = _b64.b64encode(resp.content).decode()
     sb.table("user_usage").update({"credits": round(credits - CLIP_COST, 4)}).eq("user_id", user_id).execute()
     print(f"[clip] {user_id} {len(resp.content)} bytes -{CLIP_COST}cr")
     return {"video_url": f"data:video/mp4;base64,{video_b64}", "bytes": len(resp.content), "credits_used": CLIP_COST, "credits_remaining": round(credits - CLIP_COST, 4)}
