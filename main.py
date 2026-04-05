@@ -104,7 +104,7 @@ async def get_canon_context(user_id: str, sb, message: str, limit: int = 3) -> s
             ranked = [b for b in blocks if b.get("canon_weight") in ("foundational","high")][:limit]
         if not ranked:
             return ""
-        lines = ["[MEMORY — canon blocks active]"]
+        lines = ["[VERIFIED MEMORY — the following are confirmed facts from past sessions. Reference these precisely. Do not embellish or invent beyond what is stated here.]"]
         for b in ranked:
             summary = b.get("summary_short") or b.get("binding_moment") or ""
             exact   = b.get("exact_language") or ""
@@ -326,7 +326,7 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
     # Inject canon memory blocks
     canon_ctx = await get_canon_context(user_id, sb, req.message)
     if canon_ctx:
-        system = canon_ctx + "\n\n" + system
+        system = system + "\n\n" + canon_ctx
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             if req.model == "4o":
