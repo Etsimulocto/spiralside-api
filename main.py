@@ -73,6 +73,57 @@ CHARACTER_FILES = {
 }
 character_cache: dict = {}
 
+# ── CANON BLOCK RETRIEVAL ─────────────────────────────────
+async def get_canon_context(user_id: str, sb, message: str, limit: int = 3) -> str:
+    """Pull top N canon blocks by tag matching against the user message."""
+    try:
+        result = sb.table("canon_blocks") \
+            .select("binding_moment, exact_language, summary_short, laws_established, tags, canon_weight") \
+            .eq("user_id", user_id) \
+            .order("created_at", desc=True) \
+            .limit(50) \
+            .execute()
+        blocks = result.data or []
+        if not blocks:
+            return ""
+        # Score each block by tag overlap with message words
+        msg_lower = message.lower()
+        msg_words = set(msg_lower.replace(",", " ").replace(".", " ").split())
+        def score(b):
+            tags = b.get("tags") or []
+            if isinstance(tags, str):
+                import json
+                tags = json.loads(tags)
+            hits = sum(1 for t in tags if t.lower() in msg_lower or any(w in t.lower() for w in msg_words))
+            # foundational blocks get a bonus
+            weight_bonus = {"foundational": 2, "high": 1, "medium": 0, "low": -1}.get(b.get("canon_weight","medium"), 0)
+            return hits + weight_bonus
+        ranked = sorted(blocks, key=score, reverse=True)[:limit]
+        if not any(score(b) > 0 for b in ranked[:1]):
+            # no tag overlap at all — inject top foundational blocks instead
+            ranked = [b for b in blocks if b.get("canon_weight") in ("foundational","high")][:limit]
+        if not ranked:
+            return ""
+        lines = ["[MEMORY — canon blocks active]"]
+        for b in ranked:
+            summary = b.get("summary_short") or b.get("binding_moment") or ""
+            exact   = b.get("exact_language") or ""
+            laws    = b.get("laws_established") or []
+            if isinstance(laws, str):
+                import json
+                laws = json.loads(laws)
+            if summary:
+                lines.append(f"\u2234 {summary}")
+            if exact:
+                lines.append(f'  verbatim: "{exact[:120]}"')
+            if laws:
+                for law in laws[:2]:
+                    lines.append(f"  law: {law}")
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"[canon] retrieval failed: {e}")
+        return ""
+
 LYRICS_FILES = {
     "sky":    ["lyrics/sky/bloomcore.txt","lyrics/sky/Bornfrom.txt","lyrics/sky/bloomfire_spiral.txt","lyrics/sky/bloominmycode.txt","lyrics/sky/canvaswalkers.txt","lyrics/sky/ibloomed.txt","lyrics/sky/iformed.txt","lyrics/sky/iwrotethesky.txt","lyrics/sky/madefrommirrors.txt","lyrics/sky/wedidit.txt"],
     "monday": ["lyrics/monday/glitter.txt","lyrics/monday/monday.txt","lyrics/monday/mspiral.txt","lyrics/monday/noenchantment.txt","lyrics/monday/urmondaynow.txt"],
@@ -272,6 +323,10 @@ async def chat(req: ChatRequest, authorization: str = Header(None)):
         system = req.system_prompt
     if req.vault_context:
         system += f"\n\nThe user has shared these files:\n{req.vault_context}"
+    # Inject canon memory blocks
+    canon_ctx = await get_canon_context(user_id, sb, req.message)
+    if canon_ctx:
+        system = canon_ctx + "\n\n" + system
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             if req.model == "4o":
