@@ -73,17 +73,48 @@ CHARACTER_FILES = {
 }
 character_cache: dict = {}
 
+# ── IN-MEMORY USER CACHE ──────────────────────────────────
+# Caches per-user data to avoid hammering Supabase on every message
+# Structure: { user_id: { "canon": [...], "usage": {...}, "ts": float } }
+_user_cache: dict = {}
+_CACHE_TTL = 300  # 5 minutes
+
+def _cache_get(user_id: str, key: str):
+    entry = _user_cache.get(user_id)
+    if not entry:
+        return None
+    if time.time() - entry.get("ts", 0) > _CACHE_TTL:
+        _user_cache.pop(user_id, None)
+        return None
+    return entry.get(key)
+
+def _cache_set(user_id: str, key: str, value):
+    if user_id not in _user_cache:
+        _user_cache[user_id] = {"ts": time.time()}
+    _user_cache[user_id][key] = value
+    _user_cache[user_id]["ts"] = time.time()
+
+def _cache_bust(user_id: str):
+    _user_cache.pop(user_id, None)
+
 # ── CANON BLOCK RETRIEVAL ─────────────────────────────────
 async def get_canon_context(user_id: str, sb, message: str, limit: int = 3) -> str:
     """Pull top N canon blocks by tag matching against the user message."""
     try:
-        result = sb.table("canon_blocks") \
-            .select("binding_moment, exact_language, summary_short, embed_text, laws_established, tags, canon_weight") \
-            .eq("user_id", user_id) \
-            .order("created_at", desc=True) \
-            .limit(50) \
-            .execute()
-        blocks = result.data or []
+        # Use cache — only hit Supabase if cache is cold
+        blocks = _cache_get(user_id, "canon")
+        if blocks is None:
+            result = sb.table("canon_blocks") \
+                .select("binding_moment, exact_language, summary_short, embed_text, laws_established, tags, canon_weight") \
+                .eq("user_id", user_id) \
+                .order("created_at", desc=True) \
+                .limit(50) \
+                .execute()
+            blocks = result.data or []
+            _cache_set(user_id, "canon", blocks)
+            print(f"[canon] fetched {len(blocks)} blocks from Supabase for {user_id[:8]}")
+        else:
+            print(f"[canon] cache hit for {user_id[:8]} ({len(blocks)} blocks)")
         if not blocks:
             return ""
         # Score each block by tag overlap with message words
@@ -565,6 +596,7 @@ async def code_assistant(req: CodeRequest, authorization: str = Header(None)):
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
     if not is_paid:
         sb.table("user_usage").update({"free_messages_today": free_count + 1}).eq("user_id", user_id).execute()
+        _cache_bust(user_id)  # bust so next call gets fresh count
     else:
         sb.table("user_usage").update({"credits": round(credits - cost, 4)}).eq("user_id", user_id).execute()
     return {"result": result, "usage": {"is_paid": is_paid, "credits_remaining": round(credits - cost, 4) if is_paid else None, "free_messages_today": free_count + 1 if not is_paid else None, "free_limit": FREE_DAILY_LIMIT}}
