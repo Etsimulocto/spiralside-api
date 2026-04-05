@@ -78,7 +78,7 @@ async def get_canon_context(user_id: str, sb, message: str, limit: int = 3) -> s
     """Pull top N canon blocks by tag matching against the user message."""
     try:
         result = sb.table("canon_blocks") \
-            .select("binding_moment, exact_language, summary_short, laws_established, tags, canon_weight") \
+            .select("binding_moment, exact_language, summary_short, embed_text, laws_established, tags, canon_weight") \
             .eq("user_id", user_id) \
             .order("created_at", desc=True) \
             .limit(50) \
@@ -92,16 +92,26 @@ async def get_canon_context(user_id: str, sb, message: str, limit: int = 3) -> s
         def score(b):
             tags = b.get("tags") or []
             if isinstance(tags, str):
-                import json
-                tags = json.loads(tags)
-            hits = sum(1 for t in tags if t.lower() in msg_lower or any(w in t.lower() for w in msg_words))
+                import json as _j
+                tags = _j.loads(tags)
+            # Match against tags
+            tag_hits = sum(1 for t in tags if t.lower() in msg_lower or any(w in t.lower() for w in msg_words if len(w) > 3))
+            # Also match against binding_moment, summary_short, embed_text full text
+            full_text = " ".join(filter(None, [
+                b.get("binding_moment") or "",
+                b.get("summary_short") or "",
+                b.get("embed_text") or "",
+                b.get("exact_language") or "",
+            ])).lower()
+            text_hits = sum(1 for w in msg_words if len(w) > 3 and w in full_text)
             # foundational blocks get a bonus
-            weight_bonus = {"foundational": 2, "high": 1, "medium": 0, "low": -1}.get(b.get("canon_weight","medium"), 0)
-            return hits + weight_bonus
+            weight_bonus = {"foundational": 3, "high": 2, "medium": 1, "low": 0}.get(b.get("canon_weight","medium"), 0)
+            return tag_hits * 2 + text_hits + weight_bonus
         ranked = sorted(blocks, key=score, reverse=True)[:limit]
-        if not any(score(b) > 0 for b in ranked[:1]):
-            # no tag overlap at all — inject top foundational blocks instead
-            ranked = [b for b in blocks if b.get("canon_weight") in ("foundational","high")][:limit]
+        if not any(score(b) > 1 for b in ranked[:1]):
+            # low scores — inject top foundational+high blocks as baseline memory
+            priority = [b for b in blocks if b.get("canon_weight") in ("foundational","high")]
+            ranked = (priority + ranked)[:limit]
         if not ranked:
             return ""
         lines = ["[VERIFIED MEMORY — the following are confirmed facts from past sessions. Reference these precisely. Do not embellish or invent beyond what is stated here.]"]
