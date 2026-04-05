@@ -284,6 +284,13 @@ class OrderRequest(BaseModel):
 class CaptureRequest(BaseModel):
     order_id: str
 
+class CannonizeRequest(BaseModel):
+    raw_transcript: str
+    session_date:   str = ""
+    canon_weight:   str = "medium"
+    characters:     str = ""
+    platform:       str = "Spiralside" 
+
 class VaultFileRecord(BaseModel):
     id: str           # UUID generated client-side so IDB and DB stay in sync
     name: str         # original filename
@@ -773,6 +780,114 @@ async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     print(f"[clip] {user_id} {len(resp.content)} bytes -{CLIP_COST}cr")
     return {"video_url": f"data:video/mp4;base64,{video_b64}", "bytes": len(resp.content), "credits_used": CLIP_COST, "credits_remaining": round(credits - CLIP_COST, 4)}
 
+
+# ── CANNONIZE ─────────────────────────────────────────────
+@app.post("/cannonize")
+async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    today = str(date.today())
+
+    # Get or create usage record
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if not usage.data:
+        sb.table("user_usage").insert({
+            "user_id": user_id, "credits": 0.0,
+            "free_messages_today": 0, "last_reset_date": today,
+            "is_paid": False, "cannonize_count": 0
+        }).execute()
+        record = {"credits": 0.0, "is_paid": False, "cannonize_count": 0}
+    else:
+        record = usage.data[0]
+
+    cannonize_count = record.get("cannonize_count") or 0
+    is_paid         = record.get("is_paid") or False
+    credits         = record.get("credits") or 0.0
+
+    # Check quota — 5 free then charge credits
+    if cannonize_count >= FREE_CANNONIZES:
+        if not is_paid:
+            raise HTTPException(status_code=402,
+                detail=f"Free cannonizes used ({FREE_CANNONIZES}). Add credits to continue.")
+        if credits < CANNONIZE_COST:
+            raise HTTPException(status_code=402,
+                detail=f"Not enough credits. Need {CANNONIZE_COST} cr.")
+
+    # Build prompt
+    system_prompt = (
+        "You are Cannonized, memory forge for Spiralside. "
+        "Extract structured memory blocks from transcripts. "
+        "Respond ONLY with valid JSON — no markdown, no preamble — with these exact keys: "
+        "session_id, session_date, platform, characters_present, "
+        "canon_weight (low|medium|high|foundational), "
+        "binding_moment (1-3 sentences: what locked in), "
+        "exact_language (verbatim key phrases — never paraphrase), "
+        "context (why it mattered), "
+        "laws_established (array of rules/protocols), "
+        "tags (array), "
+        "summary_short (1-2 sentences under 40 words: who + what happened + why it mattered), "
+        "embed_text (dense flat paragraph combining characters, binding moment, key phrases, laws, and tags — optimized for semantic search)"
+    )
+    user_prompt = (
+        f"Date: {req.session_date or 'unknown'}\n"
+        f"Weight: {req.canon_weight}\n"
+        f"Characters: {req.characters or 'unknown'}\n"
+        f"Platform: {req.platform}\n\n"
+        f"Transcript:\n{req.raw_transcript}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1000,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}]
+                }
+            )
+        resp.raise_for_status()
+        block_text = resp.json()["content"][0]["text"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
+
+    # Deduct credits / increment count
+    new_count = cannonize_count + 1
+    if cannonize_count >= FREE_CANNONIZES and is_paid:
+        sb.table("user_usage").update({
+            "credits": round(credits - CANNONIZE_COST, 4),
+            "cannonize_count": new_count
+        }).eq("user_id", user_id).execute()
+    else:
+        sb.table("user_usage").update({
+            "cannonize_count": new_count
+        }).eq("user_id", user_id).execute()
+
+    _cache_bust(user_id)
+
+    # Parse and return block
+    import json as _json
+    try:
+        clean = block_text.replace("```json", "").replace("```", "").strip()
+        block = _json.loads(clean)
+    except Exception:
+        block = {"raw": block_text}
+
+    free_remaining = max(0, FREE_CANNONIZES - new_count)
+    return {
+        "block": block,
+        "usage": {
+            "cannonize_count": new_count,
+            "free_remaining": free_remaining,
+            "credits_charged": CANNONIZE_COST if (cannonize_count >= FREE_CANNONIZES and is_paid) else 0,
+            "credits_remaining": round(credits - CANNONIZE_COST, 4) if (cannonize_count >= FREE_CANNONIZES and is_paid) else credits
+        }
+    }
 
 # ── RELOAD CHARACTERS ─────────────────────────────────────
 
