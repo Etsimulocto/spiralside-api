@@ -1063,6 +1063,16 @@ async def text_to_speech(req: TTSRequest, authorization: str = Header(None)):
 
 
 
+@app.post("/create-storage-order")
+async def create_storage_order(authorization: str = Header(None)):
+    user_id, _ = await verify_user(authorization)
+    try:
+        order = await create_paypal_order("2", user_id)
+        approve_url = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
+        return {"order_id": order["id"], "approve_url": approve_url, "plan": "archive"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PayPal error: {str(e)}")
+
 @app.post("/reload-characters")
 async def reload_characters():
     await load_characters()
