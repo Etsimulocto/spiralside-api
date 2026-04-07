@@ -508,6 +508,27 @@ async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
         # Credit the correct user from DB record, not from token
         real_user_id   = order_data["user_id"]
         credits_to_add = order_data["credits"]
+        # Activate storage plan if tagged in custom_id
+        _custom = result.get("purchase_units", [{}])[0].get("custom_id", "") if isinstance(result, dict) else ""
+        from datetime import timedelta, datetime as dt
+        if "|archive_monthly" in _custom:
+            _exp = dt.utcnow() + timedelta(days=30)
+            sb.table("user_usage").update({
+                "storage_plan": "archive", "plan_type": "archive_monthly",
+                "storage_expires_at": _exp.isoformat(),
+                "plan_purchased_at": dt.utcnow().isoformat()
+            }).eq("user_id", user_id).execute()
+            if hasattr(sys.modules[__name__], "_cache_bust"): _cache_bust(user_id)
+            print(f"[storage] archive monthly activated for {user_id} until {_exp.date()}")
+        elif "|archive_annual" in _custom:
+            _exp = dt.utcnow() + timedelta(days=365)
+            sb.table("user_usage").update({
+                "storage_plan": "archive", "plan_type": "archive_annual",
+                "storage_expires_at": _exp.isoformat(),
+                "plan_purchased_at": dt.utcnow().isoformat()
+            }).eq("user_id", user_id).execute()
+            if hasattr(sys.modules[__name__], "_cache_bust"): _cache_bust(user_id)
+            print(f"[storage] archive annual activated for {user_id} until {_exp.date()}")
         usage = sb.table("user_usage").select("*").eq("user_id", real_user_id).execute()
         if not usage.data:
             sb.table("user_usage").insert({
@@ -1062,6 +1083,35 @@ async def text_to_speech(req: TTSRequest, authorization: str = Header(None)):
 
 
 
+
+@app.post("/create-annual-storage-order")
+async def create_annual_storage_order(authorization: str = Header(None)):
+    user_id, _ = await verify_user(authorization)
+    try:
+        token = await get_paypal_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{PAYPAL_BASE}/v2/checkout/orders",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={
+                    "intent": "CAPTURE",
+                    "purchase_units": [{
+                        "amount": {"currency_code": "USD", "value": "19.99"},
+                        "description": "Spiralside Archive Plan (annual)",
+                        "custom_id": f"{user_id}|archive_annual"
+                    }],
+                    "application_context": {
+                        "return_url": "https://www.spiralside.com/?payment=success",
+                        "cancel_url": "https://www.spiralside.com/?payment=cancelled"
+                    }
+                }
+            )
+            resp.raise_for_status()
+            order = resp.json()
+        approve_url = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
+        return {"order_id": order["id"], "approve_url": approve_url, "plan": "archive_annual"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PayPal error: {str(e)}")
 
 @app.post("/create-storage-order")
 async def create_storage_order(authorization: str = Header(None)):
