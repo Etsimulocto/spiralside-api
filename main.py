@@ -865,7 +865,7 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
         "Respond ONLY with valid JSON, no markdown, no preamble, no explanation. "
         "Include exactly these fields:\n" + field_list
     )
-        user_prompt = (
+    user_prompt = (
         f"Date: {req.session_date or 'unknown'}\n"
         f"Weight: {req.canon_weight}\n"
         f"Characters: {req.characters or 'unknown'}\n"
