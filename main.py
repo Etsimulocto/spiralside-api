@@ -42,6 +42,8 @@ PAYPAL_BASE        = "https://api-m.paypal.com"  # live
 
 # ── LIMITS ────────────────────────────────────────────────
 FREE_DAILY_LIMIT = 10  # resets every day
+FREE_CANNONIZES = 5
+CANNONIZE_COST  = 140  # credits
 MARGIN = 1.17
 MODEL_RATES = {
     "haiku ": (0.80, 4.00),
