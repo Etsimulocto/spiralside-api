@@ -289,7 +289,8 @@ class CannonizeRequest(BaseModel):
     session_date:   str = ""
     canon_weight:   str = "medium"
     characters:     str = ""
-    platform:       str = "Spiralside" 
+    platform:       str = "Spiralside"
+    schema_fields:  list = [] 
 
 class VaultFileRecord(BaseModel):
     id: str           # UUID generated client-side so IDB and DB stay in sync
@@ -833,20 +834,37 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
             raise HTTPException(status_code=402,
                 detail=f"Not enough credits. Need {CANNONIZE_COST} cr.")
 
-    # Build prompt
+    # Build prompt dynamically from schema_fields
+    BASE_FIELDS = [
+        "session_id (string, format SESS-YYYYMMDD-XXXX)",
+        "session_date (string)",
+        "platform (string)",
+        "characters_present (array of names)",
+        "canon_weight (one of: low | medium | high | foundational)",
+        "summary_short (1-2 sentences max 40 words: who + what happened + why it mattered)",
+        "embed_text (dense paragraph of all key terms optimized for semantic search)",
+    ]
+    FIELD_MAP = {
+        "binding_moment":   "binding_moment: 1-3 sentences on what locked in or changed",
+        "exact_language":   "exact_language: verbatim key phrases — never paraphrase, quote exactly",
+        "key_decisions":    "key_decisions: array of decisions made",
+        "action_items":     "action_items: array of follow-ups or next steps",
+        "laws_established": "laws_established: array of rules, protocols, or agreements",
+        "emotional_tone":   "emotional_tone: 1-2 sentences on the feeling and energy",
+        "open_questions":   "open_questions: array of unresolved threads",
+        "context":          "context: 1-2 sentences on why this session mattered",
+        "tags":             "tags: array of short topic tags",
+    }
+    DEFAULT_FIELDS = ["binding_moment", "exact_language", "laws_established", "tags"]
+    requested  = req.schema_fields if req.schema_fields else DEFAULT_FIELDS
+    optional   = [FIELD_MAP[f] for f in requested if f in FIELD_MAP]
+    field_list = "
+".join(f"- {fi}" for fi in BASE_FIELDS + optional)
     system_prompt = (
-        "You are Cannonized, memory forge for Spiralside. "
-        "Extract structured memory blocks from transcripts. "
-        "Respond ONLY with valid JSON — no markdown, no preamble — with these exact keys: "
-        "session_id, session_date, platform, characters_present, "
-        "canon_weight (low|medium|high|foundational), "
-        "binding_moment (1-3 sentences: what locked in), "
-        "exact_language (verbatim key phrases — never paraphrase), "
-        "context (why it mattered), "
-        "laws_established (array of rules/protocols), "
-        "tags (array), "
-        "summary_short (1-2 sentences under 40 words: who + what happened + why it mattered), "
-        "embed_text (dense flat paragraph combining characters, binding moment, key phrases, laws, and tags — optimized for semantic search)"
+        "You are a memory forge. Extract structured information from conversation transcripts. "
+        "Respond ONLY with valid JSON — no markdown, no preamble, no explanation. "
+        f"Include exactly these fields:
+{field_list}"
     )
     user_prompt = (
         f"Date: {req.session_date or 'unknown'}\n"
