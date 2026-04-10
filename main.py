@@ -840,13 +840,13 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
         "session_date (string)",
         "platform (string)",
         "characters_present (array of names)",
-        "canon_weight (one of: low | medium | high | foundational)",
+        "canon_weight (one of: low, medium, high, foundational)",
         "summary_short (1-2 sentences max 40 words: who + what happened + why it mattered)",
         "embed_text (dense paragraph of all key terms optimized for semantic search)",
     ]
     FIELD_MAP = {
         "binding_moment":   "binding_moment: 1-3 sentences on what locked in or changed",
-        "exact_language":   "exact_language: verbatim key phrases — never paraphrase, quote exactly",
+        "exact_language":   "exact_language: verbatim key phrases, quote exactly, never paraphrase",
         "key_decisions":    "key_decisions: array of decisions made",
         "action_items":     "action_items: array of follow-ups or next steps",
         "laws_established": "laws_established: array of rules, protocols, or agreements",
@@ -858,15 +858,14 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
     DEFAULT_FIELDS = ["binding_moment", "exact_language", "laws_established", "tags"]
     requested  = req.schema_fields if req.schema_fields else DEFAULT_FIELDS
     optional   = [FIELD_MAP[f] for f in requested if f in FIELD_MAP]
-    field_list = "
-".join(f"- {fi}" for fi in BASE_FIELDS + optional)
+    all_fields = BASE_FIELDS + optional
+    field_list = "\n".join("- " + fi for fi in all_fields)
     system_prompt = (
         "You are a memory forge. Extract structured information from conversation transcripts. "
-        "Respond ONLY with valid JSON — no markdown, no preamble, no explanation. "
-        f"Include exactly these fields:
-{field_list}"
+        "Respond ONLY with valid JSON, no markdown, no preamble, no explanation. "
+        "Include exactly these fields:\n" + field_list
     )
-    user_prompt = (
+        user_prompt = (
         f"Date: {req.session_date or 'unknown'}\n"
         f"Weight: {req.canon_weight}\n"
         f"Characters: {req.characters or 'unknown'}\n"
