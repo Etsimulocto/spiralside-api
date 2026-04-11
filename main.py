@@ -634,15 +634,21 @@ async def code_assistant(req: CodeRequest, authorization: str = Header(None)):
 
 
 IMAGE_MODEL_COSTS = {
-    "schnell": 500,
-    "dev":     1000,
-    "sdxl":    1500,
-    "dalle3":  3000,
+    "schnell":  500,
+    "lightning": 1000,
+    "dev":      1500,
+    "kolors":   1500,
+    "sd35":     2000,
+    "sdxl":     1500,
+    "dalle3":   3000,
 }
 HF_MODELS = {
-    "schnell": "black-forest-labs/FLUX.1-schnell",
+    "schnell":   "black-forest-labs/FLUX.1-schnell",
     "lightning": "ByteDance/SDXL-Lightning",
-    "sdxl":    "ByteDance/SDXL-Lightning",
+    "dev":       "black-forest-labs/FLUX.1-dev",
+    "kolors":    "Kwai-Kolors/Kolors",
+    "sd35":      "stabilityai/stable-diffusion-3.5-large-turbo",
+    "sdxl":      "ByteDance/SDXL-Lightning",
 }
 HF_API = "https://router.huggingface.co/hf-inference"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
