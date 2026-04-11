@@ -646,8 +646,8 @@ HF_MODELS = {
     "schnell":   "black-forest-labs/FLUX.1-schnell",
     "lightning": "ByteDance/SDXL-Lightning",
     "dev":       "black-forest-labs/FLUX.1-dev",
-    "kolors":    "Kwai-Kolors/Kolors",
-    "sd35":      "stabilityai/stable-diffusion-3.5-large-turbo",
+    "kolors":    "cagliostrolab/animagine-xl-3.1",
+    "sd35":      "Lykon/dreamshaper-xl-turbo",
     "sdxl":      "ByteDance/SDXL-Lightning",
 }
 HF_API = "https://router.huggingface.co/hf-inference"
