@@ -655,6 +655,24 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 FREE_IMAGE_LIMIT = 3
 
+# ── PG-13 PROMPT FILTER ──────────────────────────────────
+_BLOCKED_TERMS = [
+    "nude","naked","nudity","nsfw","porn","pornographic","explicit","xxx",
+    "sexual","sex act","erotic","erotica","hentai","lewd","lascivious",
+    "nipple","nipples","genitalia","genital","penis","vagina","anus",
+    "topless","bottomless","spread legs","orgasm","masturbat","intercourse",
+    "penetrat","cumshot","creampie","blowjob","handjob","onlyfans",
+    "gore","gory","decapitat","dismember","mutilat","eviscerat",
+    "torture","snuff","beheading","massacre","slaughter","entrails",
+    "severed head","severed limb","graphic violence","brutal death",
+    "loli","shota","underage","child nude","minor nude",
+    "nazi","swastika","white supremac",
+]
+
+def _is_clean(prompt: str) -> bool:
+    p = prompt.lower()
+    return not any(term in p for term in _BLOCKED_TERMS)
+
 class ImageRequest(BaseModel):
     prompt: str
     negative_prompt: str = ""
@@ -691,6 +709,12 @@ async def generate_image(req: ImageRequest, authorization: str = Header(None)):
         if credits < cost:
             raise HTTPException(status_code=402,
                 detail=f"Need {cost} cr for this model. You have {int(credits)} cr.")
+    if not _is_clean(req.prompt):
+        raise HTTPException(status_code=400,
+            detail="Prompt contains content that is not allowed. Keep it PG-13.")
+    if req.negative_prompt and not _is_clean(req.negative_prompt):
+        raise HTTPException(status_code=400,
+            detail="Negative prompt contains content that is not allowed.")
     w = max(256, min(1024, req.width))
     h = max(256, min(1024, req.height))
     if not is_paid:
