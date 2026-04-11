@@ -252,6 +252,45 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# ── GLOBAL PG-13 CONTENT FILTER MIDDLEWARE ────────────────
+# Runs on every POST request — checks all text fields for blocked content
+# Endpoints skipped: payments, vault/list, TTS, reload, admin
+_FILTER_SKIP = {"/create-order","/capture-order","/tts","/reload-characters",
+                "/admin/add-credits","/send-gift","/create-gift","/redeem-gift",
+                "/vault/list","/vault/add","/create-annual-storage-order",
+                "/create-storage-order","/generate-clip"}
+
+@app.middleware("http")
+async def pg13_filter(request, call_next):
+    import json as _json
+    if request.method == "POST" and request.url.path not in _FILTER_SKIP:
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body = _json.loads(body_bytes)
+                # Check all string values in the body
+                texts = []
+                if isinstance(body, dict):
+                    for v in body.values():
+                        if isinstance(v, str):
+                            texts.append(v)
+                for text in texts:
+                    if not _is_clean(text):
+                        from fastapi.responses import JSONResponse
+                        return JSONResponse(
+                            status_code=400,
+                            content={"detail": "Content not allowed. Keep it PG-13."}
+                        )
+            # Re-attach body so endpoint can still read it
+            from starlette.datastructures import Headers
+            from starlette.requests import Request
+            async def receive():
+                return {"type": "http.request", "body": body_bytes}
+            request = Request(request.scope, receive)
+        except Exception:
+            pass  # malformed JSON or read error — let endpoint handle it
+    return await call_next(request)
+
 # ── SUPABASE ──────────────────────────────────────────────
 def get_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
