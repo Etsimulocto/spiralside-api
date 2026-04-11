@@ -642,7 +642,7 @@ IMAGE_MODEL_COSTS = {
 HF_MODELS = {
     "schnell": "black-forest-labs/FLUX.1-schnell",
     "lightning": "ByteDance/SDXL-Lightning",
-    "sdxl":    "stabilityai/stable-diffusion-xl-base-1.0",
+    "sdxl":    "ByteDance/SDXL-Lightning",
 }
 HF_API = "https://router.huggingface.co/hf-inference"
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
