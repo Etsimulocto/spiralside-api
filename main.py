@@ -977,9 +977,9 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
 
     # Deduct credits / increment count
     new_count = cannonize_count + 1
-    if cannonize_count >= FREE_CANNONIZES and is_paid:
+    if cannonize_count >= FREE_CANNONIZES:
         sb.table("user_usage").update({
-            "credits": round(credits - CANNONIZE_COST, 4),
+            "forge_credits": max(0, forge_credits - 30),
             "cannonize_count": new_count
         }).eq("user_id", user_id).execute()
     else:
