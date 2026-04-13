@@ -585,7 +585,13 @@ async def capture_order(req: CaptureRequest, authorization: str = Header(None)):
             new_balance = float(credits_to_add)
         else:
             current = usage.data[0]["credits"] or 0
-            new_balance = current + credits_to_add
+            if order_data.get("is_forge"):
+                fc = usage.data[0].get("forge_credits") or 0
+                sb.table("user_usage").update({"forge_credits": fc + credits_to_add}).eq("user_id", real_user_id).execute()
+                new_balance = fc + credits_to_add
+            else:
+                sb.table("user_usage").update({"credits": current + credits_to_add, "is_paid": True}).eq("user_id", real_user_id).execute()
+                new_balance = current + credits_to_add
             sb.table("user_usage").update({
                 "credits": new_balance,
                 "is_paid": True
