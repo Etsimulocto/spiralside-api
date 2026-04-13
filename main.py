@@ -904,6 +904,7 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
     is_paid         = record.get("is_paid") or False
     credits         = record.get("credits") or 0.0
     forge_credits   = record.get("forge_credits") or 0
+    forge_credits   = record.get("forge_credits") or 0
 
     # Check quota — 5 free then charge credits
     if cannonize_count >= FREE_CANNONIZES:
