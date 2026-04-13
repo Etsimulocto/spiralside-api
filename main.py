@@ -909,9 +909,9 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
         if not is_paid:
             raise HTTPException(status_code=402,
                 detail=f"Free cannonizes used ({FREE_CANNONIZES}). Add credits to continue.")
-        if credits < CANNONIZE_COST:
+        if forge_credits < 1:
             raise HTTPException(status_code=402,
-                detail=f"Not enough credits. Need {CANNONIZE_COST} cr.")
+                detail=f"Not enough forge credits. Purchase a Canon Forge pack to continue.")
 
     # Build prompt dynamically from schema_fields
     BASE_FIELDS = [
