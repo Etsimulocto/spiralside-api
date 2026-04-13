@@ -61,6 +61,7 @@ CREDIT_PACKS = {
     "5":  500000,
     "10": 1100000,
     "20": 2400000,
+    "499": 0,
 }
 
 # ── HF CHARACTER FILES ────────────────────────────────────
@@ -517,7 +518,7 @@ async def update_sheet(req: ChatRequest, authorization: str = Header(None)):
 async def create_order(req: OrderRequest, authorization: str = Header(None)):
     user_id, sb = await verify_user(authorization)
     if req.amount not in CREDIT_PACKS:
-        raise HTTPException(status_code=400, detail="Invalid amount. Choose 5, 10, or 20.")
+        raise HTTPException(status_code=400, detail="Invalid amount. Choose 5, 10, 20, or 499.")
     try:
         order = await create_paypal_order(req.amount, user_id)
         approve_url = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
@@ -526,7 +527,8 @@ async def create_order(req: OrderRequest, authorization: str = Header(None)):
             "order_id": order["id"],
             "user_id":  user_id,
             "amount":   req.amount,
-            "credits":  CREDIT_PACKS[req.amount]
+            "credits":  CREDIT_PACKS[req.amount],
+            "is_forge": req.amount == "499"
         }).execute()
         return {"order_id": order["id"], "approve_url": approve_url}
     except Exception as e:
