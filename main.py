@@ -1008,7 +1008,42 @@ async def cannonize(req: CannonizeRequest, authorization: str = Header(None)):
         }
     }
 
-# ── RELOAD CHARACTERS ─────────────────────────────────────
+# # ── PI GPIO EXTRACTOR ─────────────────────────────
+class PiGpioRequest(BaseModel):
+    output: str
+
+@app.post("/pi-gpio")
+async def pi_gpio(req: PiGpioRequest, authorization: str = Header(None)):
+    await verify_user(authorization)
+    system = (
+        "You are a GPIO wiring extractor. Given Raspberry Pi project instructions, "
+        "extract all pin connections. Return ONLY a valid JSON object: {\"pins\": [...]} "
+        "Each pin: {\"pin\": <physical Pi pin number 1-40>, \"label\": \"<what connects here>\", "
+        "\"topin\": \"<component pin/signal>\", \"note\": \"<brief note>\", \"color\": \"<hex wire color>\"} "
+        "Colors: red=#e03030 power, black=#222222 GND, green=#28a040 GPIO, "
+        "blue=#2060d0 SDA, orange=#f07820 SCL, purple=#8040c0 SPI. "
+        "Physical pin numbers only 1-40. No markdown, just the JSON object."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800,
+                      "system": system,
+                      "messages": [{"role": "user", "content": req.output[:4000]}]}
+            )
+        resp.raise_for_status()
+        import json as _json
+        raw = resp.json()["content"][0]["text"].strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"): raw = raw[4:]
+        return _json.loads(raw.strip())
+    except Exception as e:
+        return {"pins": [], "error": str(e)}
+
+# ── RELOAD CHARACTERS ─────────────────────────────
 
 class SendGiftRequest(BaseModel):
     credits: int
