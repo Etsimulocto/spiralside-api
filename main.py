@@ -1262,6 +1262,70 @@ async def reload_characters():
     await load_characters()
     return {"loaded": list(character_cache.keys())}
 
+
+
+
+FAL_BASE = "https://queue.fal.run"
+class VideoRequest(BaseModel):
+    prompt: str
+    image_url: str = ""
+    duration: int = 5
+@app.post("/generate-video")
+async def generate_video(req: VideoRequest, authorization: str = Header(None)):
+    user_id, sb = await verify_user(authorization)
+    VIDEO_COST = 30
+    today = str(date.today())
+    usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if not usage.data:
+        raise HTTPException(status_code=402, detail="No credits. Add credits to generate video.")
+    record = usage.data[0]
+    credits = record["credits"]
+    is_paid = record["is_paid"]
+    if not is_paid or credits < VIDEO_COST:
+        raise HTTPException(status_code=402, detail="Need 30 credits to generate video.")
+    if not FAL_KEY:
+        raise HTTPException(status_code=500, detail="FAL_KEY not configured.")
+    endpoint = "fal-ai/pixverse/v6/image-to-video" if req.image_url else "fal-ai/pixverse/v6/text-to-video"
+    payload = {
+        "prompt": req.prompt,
+        "resolution": "540p",
+        "duration": "5s",
+        "style": "anime"
+    }
+    if req.image_url:
+        payload["image_url"] = req.image_url
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            submit = await client.post(
+                f"{FAL_BASE}/{endpoint}",
+                headers={"Authorization": f"Key {FAL_KEY}", "Content-Type": "application/json"},
+                json=payload
+            )
+            submit.raise_for_status()
+            request_id = submit.json()["request_id"]
+            for _ in range(60):
+                await __import__("asyncio").sleep(3)
+                poll = await client.get(
+                    f"{FAL_BASE}/{endpoint}/requests/{request_id}/status",
+                    headers={"Authorization": f"Key {FAL_KEY}"}
+                )
+                status = poll.json().get("status")
+                if status == "COMPLETED":
+                    result = await client.get(
+                        f"{FAL_BASE}/{endpoint}/requests/{request_id}",
+                        headers={"Authorization": f"Key {FAL_KEY}"}
+                    )
+                    video_url = result.json()["video"]["url"]
+                    sb.table("user_usage").update({"credits": credits - VIDEO_COST}).eq("user_id", user_id).execute()
+                    return {"video_url": video_url, "credits_remaining": credits - VIDEO_COST}
+                elif status == "FAILED":
+                    raise HTTPException(status_code=500, detail="Video generation failed.")
+            raise HTTPException(status_code=504, detail="Video generation timed out.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Video error: {str(e)}")
+
 # ── ADMIN: ADD CREDITS ────────────────────────────────────
 # Protected by admin secret — set ADMIN_SECRET in Railway env vars
 @app.post("/admin/add-credits")
