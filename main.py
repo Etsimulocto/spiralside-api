@@ -1265,7 +1265,7 @@ async def reload_characters():
 
 
 
-FAL_BASE = "https://queue.fal.run"
+FAL_BASE = "https://fal.run"
 class VideoRequest(BaseModel):
     prompt: str
     image_url: str = ""
