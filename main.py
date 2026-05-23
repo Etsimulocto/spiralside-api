@@ -39,6 +39,7 @@ PAYPAL_SECRET      = os.environ.get("PAYPAL_SECRET")
 HF_TOKEN           = os.environ.get("HF_TOKEN")
 HF_TOKEN           = os.environ.get("HF_TOKEN")
 PAYPAL_BASE        = "https://api-m.paypal.com"  # live
+FAL_KEY = os.environ.get("FAL_KEY")
 
 # ── LIMITS ────────────────────────────────────────────────
 FREE_DAILY_LIMIT = 10  # resets every day
