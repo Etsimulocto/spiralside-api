@@ -821,7 +821,7 @@ class ClipRequest(BaseModel):
     duration: int = 5
     negative_prompt: str = "blurry, low quality, ugly, deformed, watermark"
 
-@app.post("/generate-clip")
+@app.post("/generate-clip-hf-deprecated")
 async def generate_clip(req: ClipRequest, authorization: str = Header(None)):
     user_id, sb = await verify_user(authorization)
     usage = sb.table("user_usage").select("*").eq("user_id", user_id).execute()
